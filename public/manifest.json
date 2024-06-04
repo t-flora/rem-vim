@@ -1,17 +1,16 @@
 {
+  "author": "tflora",
+  "name": "rem-vim",
+  "description": "Vim emulator for RemNote",
+  "enableOnMobile": false,
+  "id": "tflora-lqrmy2v",
+  "repoUrl": "localhost:8080/",
   "manifestVersion": 1,
-  "id": "plugin_template",
-  "name": "Plugin Template",
-  "author": "remnote",
-  "repoUrl": "",
   "version": {
     "major": 0,
     "minor": 0,
     "patch": 1
   },
-  "theme": [],
-  "enableOnMobile": false,
-  "description": "",
   "requestNative": false,
   "requiredScopes": [
     {
