@@ -1,0 +1,295 @@
+/**
+ * L3 test double: a hand-rolled RNPlugin implementing exactly the SDK
+ * surface VimAdapter touches (verified by grep — ~25 methods). Everything
+ * else FAILS FAST: accessing an unmocked namespace member throws, so a new
+ * SDK dependency in the adapter surfaces as a loud test failure instead of
+ * silent weirdness.
+ *
+ * The world models:
+ * - a single focused editor line (`text`/`caret`/`sel`) with the action
+ *   semantics the adapter relies on (selectText/cut/delete/insertPlainText/
+ *   moveCaret) — the same model tests/harness.ts proves against the engine;
+ * - a tiny rem tree (for the "Vim Keymap" config document);
+ * - recorders: toasts, the CURRENT stolen-spec set (maintained from
+ *   stealKeys/releaseKeys calls), a chronological call log, storage.
+ *
+ * Dispatch events like RemNote would with `stealKey(spec)` / `focusChanged()`.
+ * The adapter serializes work on a private promise queue — await
+ * `drain(adapter)` after dispatching to observe the settled state.
+ */
+import { AppEvents, SelectionType } from '@remnote/plugin-sdk';
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+export interface FakeCall {
+  ns: string;
+  method: string;
+  args: unknown[];
+}
+
+export class FakeRem {
+  _id: string;
+  text: string[];
+  parent: string | null = null;
+  childIds: string[] = [];
+  isDocument = false;
+
+  constructor(
+    private world: FakeWorld,
+    id: string,
+    text: string[]
+  ) {
+    this._id = id;
+    this.text = text;
+  }
+
+  async getChildrenRem(): Promise<FakeRem[]> {
+    this.world.log('rem', 'getChildrenRem', this._id);
+    return this.childIds.map((id) => this.world.rems.get(id)!).filter(Boolean);
+  }
+  async setText(text: string[]) {
+    this.world.log('rem', 'setText', this._id, text.join(''));
+    this.text = text;
+  }
+  async setIsDocument(v: boolean) {
+    this.isDocument = v;
+  }
+  async setParent(parent: string | FakeRem | null, pos?: number) {
+    const pid = typeof parent === 'string' ? parent : (parent?._id ?? null);
+    if (this.parent) {
+      const old = this.world.rems.get(this.parent);
+      if (old) old.childIds = old.childIds.filter((c) => c !== this._id);
+    }
+    this.parent = pid;
+    if (pid) {
+      const p = this.world.rems.get(pid)!;
+      const at = pos == null ? p.childIds.length : clamp(pos, 0, p.childIds.length);
+      p.childIds.splice(at, 0, this._id);
+    }
+  }
+  async getParentRem(): Promise<FakeRem | undefined> {
+    return this.parent ? this.world.rems.get(this.parent) : undefined;
+  }
+}
+
+export class FakeWorld {
+  // ---- recorders
+  calls: FakeCall[] = [];
+  toasts: string[] = [];
+  /** The specs RemNote would currently be stealing for us. */
+  stolen = new Set<string>();
+  storage = new Map<string, unknown>();
+
+  // ---- rem tree
+  rems = new Map<string, FakeRem>();
+  focusedRemId: string | null = null;
+  /** The doc open in the (single) fake pane. */
+  paneDocId: string | null = null;
+  openedRemIds: string[] = [];
+
+  // ---- the focused editor line
+  text = '';
+  caret = 0;
+  sel: { start: number; end: number } | null = null;
+  clipboard: string | null = null;
+
+  private listeners = new Map<string, ((args: unknown) => void)[]>();
+  private nextId = 1;
+
+  readonly plugin: unknown;
+
+  constructor() {
+    this.plugin = {
+      id: 'remnote-vim-test',
+      app: this.ns('app', {
+        toast: async (m: string) => {
+          this.toasts.push(m);
+        },
+        stealKeys: async (specs: string[]) => {
+          this.log('app', 'stealKeys', specs.join(','));
+          for (const s of specs) this.stolen.add(s);
+        },
+        releaseKeys: async (specs: string[]) => {
+          this.log('app', 'releaseKeys', specs.join(','));
+          for (const s of specs) this.stolen.delete(s);
+        },
+        registerCSS: async () => {},
+      }),
+      event: this.ns('event', {
+        addListener: (event: string, key: string | undefined, cb: (args: unknown) => void) => {
+          const k = `${event}::${String(key)}`;
+          this.listeners.set(k, [...(this.listeners.get(k) ?? []), cb]);
+        },
+      }),
+      rem: this.ns('rem', {
+        findOne: async (id: string) => this.rems.get(id),
+        createRem: async () => this.makeRem([]),
+        findByName: async (name: string[]) => {
+          const flat = name.join('');
+          return [...this.rems.values()].find((r) => r.text.join('') === flat);
+        },
+      }),
+      focus: this.ns('focus', {
+        getFocusedRem: async () => (this.focusedRemId ? this.rems.get(this.focusedRemId) : undefined),
+      }),
+      window: this.ns('window', {
+        getFocusedPaneId: async () => 'pane-1',
+        getOpenPaneRemId: async () => this.paneDocId ?? undefined,
+        getOpenPaneIds: async () => ['pane-1'],
+        setFocusedPaneId: async () => {},
+        openRem: async (rem: FakeRem) => {
+          this.log('window', 'openRem', rem._id);
+          this.openedRemIds.push(rem._id);
+          this.paneDocId = rem._id;
+          this.focusedRemId = rem._id;
+        },
+        openFloatingWidget: async () => {
+          this.log('window', 'openFloatingWidget');
+          return 'float-1';
+        },
+        closeFloatingWidget: async () => {
+          this.log('window', 'closeFloatingWidget');
+        },
+      }),
+      search: this.ns('search', {
+        search: async () => [],
+      }),
+      richText: this.ns('richText', {
+        toString: async (rich: unknown[]) =>
+          (rich ?? [])
+            .map((x) => (typeof x === 'string' ? x : ((x as { text?: string }).text ?? '')))
+            .join(''),
+      }),
+      storage: this.ns('storage', {
+        setSynced: async (k: string, v: unknown) => {
+          this.storage.set(k, v);
+        },
+        getSynced: async (k: string) => this.storage.get(k),
+      }),
+      editor: this.ns('editor', {
+        getFocusedEditorText: async () => (this.focusedRemId == null ? null : [this.text]),
+        getSelection: async () =>
+          this.sel
+            ? {
+                type: SelectionType.Text,
+                range: { start: this.sel.start, end: this.sel.end },
+                isReverse: false,
+              }
+            : undefined,
+        moveCaret: async (delta: number) => {
+          this.caret = clamp(this.caret + delta, 0, this.text.length);
+        },
+        moveCaretVertical: async () => {},
+        selectText: async ({ start, end }: { start: number; end: number }) => {
+          const s = clamp(Math.min(start, end), 0, this.text.length);
+          const e = clamp(Math.max(start, end), 0, this.text.length);
+          if (s === e) {
+            this.caret = s;
+            this.sel = null;
+          } else {
+            this.sel = { start: s, end: e };
+            this.caret = e;
+          }
+        },
+        cut: async () => {
+          if (!this.sel) return;
+          this.clipboard = this.text.slice(this.sel.start, this.sel.end);
+          this.removeSel();
+        },
+        delete: async () => {
+          if (this.sel) this.removeSel();
+        },
+        insertPlainText: async (t: string) => {
+          this.text = this.text.slice(0, this.caret) + t + this.text.slice(this.caret);
+          this.caret += t.length;
+          this.sel = null;
+        },
+        undo: async () => {},
+        redo: async () => {},
+      }),
+    };
+  }
+
+  // ------------------------------------------------------------ helpers
+
+  log(ns: string, method: string, ...args: unknown[]) {
+    this.calls.push({ ns, method, args });
+  }
+
+  /** Namespace proxy: known members pass through, unknown ones throw. */
+  private ns<T extends object>(name: string, impl: T): T {
+    return new Proxy(impl, {
+      get: (target, prop) => {
+        if (typeof prop === 'symbol' || prop === 'then' || prop in target) {
+          return (target as Record<string | symbol, unknown>)[prop];
+        }
+        throw new Error(`FakeWorld: unmocked plugin.${name}.${String(prop)}`);
+      },
+    });
+  }
+
+  private removeSel() {
+    if (!this.sel) return;
+    this.text = this.text.slice(0, this.sel.start) + this.text.slice(this.sel.end);
+    this.caret = this.sel.start;
+    this.sel = null;
+  }
+
+  makeRem(text: string[]): FakeRem {
+    const rem = new FakeRem(this, `rem-${this.nextId++}`, text);
+    this.rems.set(rem._id, rem);
+    return rem;
+  }
+
+  /** Create the "Vim Keymap" doc with the given lines and pin it in storage. */
+  seedConfigDoc(lines: string[]): FakeRem {
+    const doc = this.makeRem(['Vim Keymap']);
+    doc.isDocument = true;
+    for (const l of lines) {
+      const kid = this.makeRem([l]);
+      kid.parent = doc._id;
+      doc.childIds.push(kid._id);
+    }
+    this.storage.set('vim-keymap-doc-id', doc._id);
+    return doc;
+  }
+
+  /** Replace the config doc's lines (like the user editing it). */
+  setConfigLines(doc: FakeRem, lines: string[]) {
+    for (const id of doc.childIds) this.rems.delete(id);
+    doc.childIds = [];
+    for (const l of lines) {
+      const kid = this.makeRem([l]);
+      kid.parent = doc._id;
+      doc.childIds.push(kid._id);
+    }
+  }
+
+  // ------------------------------------------------------------ dispatch
+
+  private emit(event: string, args: unknown) {
+    // RemNote dispatches per listenerKey; the adapter registers under its
+    // plugin id AND undefined (a hedge) — fire ONE bucket like the app does.
+    for (const cb of this.listeners.get(`${event}::undefined`) ?? []) cb(args);
+  }
+
+  /** A stolen key arrives (spec string, as RemNote reports it). */
+  stealKey(spec: string) {
+    this.emit(AppEvents.StealKeyEvent, { key: spec });
+  }
+
+  /** Focus moved (the adapter re-checks focus itself — no payload needed). */
+  focusChanged() {
+    this.emit(AppEvents.FocusedRemChange, {});
+  }
+}
+
+/** Await the adapter's serialized work queue (private, reached for tests). */
+export function drain(adapter: unknown): Promise<unknown> {
+  return (adapter as { queue: Promise<unknown> }).queue;
+}
+
+/** Let fire-and-forget (off-queue) async work settle — e.g. trackConfigFocus. */
+export function tick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
