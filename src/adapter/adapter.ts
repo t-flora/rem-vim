@@ -9,7 +9,16 @@ import { handleKey, initialState } from '../engine/engine';
 import { stopsBetween } from '../engine/motions';
 import { Action, Mode, Snapshot, VimState } from '../engine/types';
 import { hostDocument, readDomCaret, setDomCaret } from './domCaret';
-import { bindingsForMode, SPEC_TO_SYM } from './keymap';
+import {
+  effectiveSpecs,
+  emptyConfig,
+  expandSym,
+  listMappingLines,
+  MapConfig,
+  MapDiagnostic,
+  parseMappings,
+  specToSymTable,
+} from './mappings';
 import {
   classifyStrayEdit,
   computeJumpStep,
@@ -50,6 +59,9 @@ interface RegisterNode {
 type PaneNode =
   | string
   | { direction: 'row' | 'column'; first: PaneNode; second: PaneNode; splitPercentage: number };
+
+/** The SDK's RemObject as returned by rem.findOne (not exported by name). */
+type RemObj = NonNullable<Awaited<ReturnType<RNPlugin['rem']['findOne']>>>;
 
 const MODE_COLORS: Record<Mode, string> = {
   normal: '#7c3aed',
@@ -131,6 +143,21 @@ export class VimAdapter {
   private processing = false;
   /** Fallback caret when the editor reports no selection. */
   private lastCaret = 0;
+  // ------------------------------------------------ user keymap (:config)
+  /** Parsed user key mappings from the "Vim Keymap" config document. */
+  private mapConfig: MapConfig = emptyConfig();
+  private mapDiagnostics: MapDiagnostic[] = [];
+  /** spec → engine sym for the steal listener; rebuilt with the config so
+   * mapped non-base specs (e.g. 'ctrl+j') survive translation. */
+  private specToSym: Record<string, string> = specToSymTable(emptyConfig());
+  /** The config document's rem id (pinned in synced storage). */
+  private configRemId: string | null = null;
+  /** Focus tracking: was the previous focus inside the config doc? A true→
+   * false transition means the user finished editing it — reload. */
+  private focusInConfig = false;
+  /** Drops out-of-order async focus checks (FocusedRemChange fires per row). */
+  private focusSeq = 0;
+  private configReloadQueued = false;
   // debug/instrumentation
   private pluginId = '(none)';
   // Lightweight instrumentation: rx (keys received) and done (keys fully
@@ -210,7 +237,7 @@ export class VimAdapter {
       this.dbgLast = String(spec);
       void this.render();
       if (!spec) return;
-      const sym = SPEC_TO_SYM[spec] ?? (spec.length === 1 ? spec : undefined);
+      const sym = this.specToSym[spec] ?? (spec.length === 1 ? spec : undefined);
       if (sym == null) return;
       this.enqueue(sym);
     };
@@ -226,6 +253,8 @@ export class VimAdapter {
     // reconciled on the next re-sync.)
     this.plugin.event.addListener(AppEvents.FocusedRemChange, undefined, () => {
       if (!this.processing) this.invalidateModel();
+      // Config-doc tracking: reload the keymap when focus leaves it.
+      void this.trackConfigFocus();
     });
 
     // A text edit RemNote tells us about while WE are not the one editing
@@ -260,6 +289,9 @@ export class VimAdapter {
     });
 
     await this.applyMode(this.state.mode);
+    // Load the user keymap. Serialized on the key queue and not awaited:
+    // keys pressed before it lands use the base bindings.
+    this.enqueueTask(() => this.reloadConfig(false));
   }
 
   async toggle() {
@@ -283,8 +315,21 @@ export class VimAdapter {
 
   /** Serialize key handling: keys can arrive faster than the async API runs. */
   private enqueue(sym: string) {
-    this.queue = this.queue.then(() =>
+    this.enqueueTask(() =>
       this.handleSym(sym).catch((e) => console.error('[vim] error handling', sym, e))
+    );
+  }
+
+  /**
+   * Put a task on the same serialized queue as key handling. Config reloads
+   * ride it so the mapping tables never swap in the middle of a key.
+   * NEVER await a freshly enqueued task from code already running ON the
+   * queue (runEx etc.) — it is chained behind the current task: deadlock.
+   * Queue-context code calls the work (e.g. reloadConfig) directly instead.
+   */
+  private enqueueTask(fn: () => Promise<void>) {
+    this.queue = this.queue.then(() =>
+      fn().catch((e) => console.error('[vim] queued task failed', e))
     );
   }
 
@@ -306,9 +351,14 @@ export class VimAdapter {
       await this.render();
       return;
     }
+    // User mapping: replace the pressed key with its expansion. Decided here
+    // (not at enqueue time) so `state.pending` reflects every earlier key;
+    // rhs syms run through the same per-key path dot-repeat's replayKeys
+    // uses, and are never re-expanded (noremap).
+    const rhs = expandSym(this.mapConfig, this.state, sym);
     this.processing = true;
     try {
-      await this.applyKey(sym);
+      for (const s of (rhs ?? [sym]).slice(0, 32)) await this.applyKey(s);
     } finally {
       this.processing = false;
     }
@@ -1320,6 +1370,28 @@ export class VimAdapter {
       case 'h':
         await this.openHelp();
         return;
+      case 'config':
+        await this.openConfig();
+        return;
+      case 'map':
+        await this.listMappings();
+        return;
+      // NOTE: called directly, not enqueued — runEx is already ON the key
+      // queue and awaiting a freshly enqueued task would deadlock it.
+      case 'mapload':
+        await this.reloadConfig(true);
+        return;
+      case 'nmap':
+      case 'vmap':
+      case 'noremap':
+      case 'nnoremap':
+      case 'vnoremap':
+      case 'imap':
+      case 'unmap':
+      case 'nunmap':
+      case 'vunmap':
+        await app.toast('Mappings live in the "Vim Keymap" document — :config to edit');
+        return;
       default:
         await app.toast(`Not an editor command: ${cmd} — try :help`);
     }
@@ -1629,6 +1701,9 @@ export class VimAdapter {
     { verb: 'd', hint: 'delete bullet(s)', arg: 'none' },
     { verb: 'y', hint: 'yank bullet(s)', arg: 'none' },
     { verb: 'marks', hint: 'list marks', arg: 'none' },
+    { verb: 'config', hint: 'edit custom keybindings', arg: 'none' },
+    { verb: 'map', hint: 'list key mappings + issues', arg: 'none' },
+    { verb: 'mapload', hint: 'reload keybindings', arg: 'none' },
     { verb: 'vs', hint: 'vertical split [document]', arg: 'rem' },
     { verb: 'sp', hint: 'horizontal split [document]', arg: 'rem' },
     { verb: 'q', hint: 'close pane', arg: 'none' },
@@ -1820,6 +1895,157 @@ export class VimAdapter {
       }
     } catch (e) {
       await this.plugin.app.toast(`Search failed: ${String(e)}`);
+    }
+  }
+
+  // ------------------------------------------------- user keymap (:config)
+
+  private static readonly CONFIG_DOC_NAME = 'Vim Keymap';
+  private static readonly CONFIG_ID_KEY = 'vim-keymap-doc-id';
+
+  /** Resolve the config document: pinned id first, then title search. */
+  private async findConfigDoc(): Promise<RemObj | null> {
+    const storedId =
+      this.configRemId ??
+      (await this.plugin.storage.getSynced<string>(VimAdapter.CONFIG_ID_KEY)) ??
+      null;
+    if (storedId) {
+      const doc = await this.plugin.rem.findOne(storedId);
+      if (doc) {
+        this.configRemId = storedId;
+        return doc;
+      }
+    }
+    // The pinned id dangles (doc deleted / different vault) — adopt by name.
+    const byName = await this.plugin.rem.findByName([VimAdapter.CONFIG_DOC_NAME], null);
+    if (byName) {
+      this.configRemId = byName._id;
+      await this.plugin.storage.setSynced(VimAdapter.CONFIG_ID_KEY, byName._id);
+      return byName;
+    }
+    this.configRemId = null;
+    return null;
+  }
+
+  /**
+   * Re-read the "Vim Keymap" document and apply it: parse the direct child
+   * bullets, swap the mapping/spec tables, re-diff the stolen keys. Runs ON
+   * the key queue — Ex verbs (already queued) call it directly; activation
+   * and focus-tracking enqueue it via enqueueTask (see its deadlock note).
+   */
+  private async reloadConfig(notify: boolean) {
+    let lines: string[] = [];
+    const doc = await this.findConfigDoc();
+    if (doc) {
+      const kids = await doc.getChildrenRem();
+      lines = kids.map((k) => flattenRich((k.text ?? []) as RichTextInterface));
+    }
+    const { config, diagnostics } = parseMappings(lines);
+    this.mapConfig = config;
+    this.mapDiagnostics = diagnostics;
+    this.specToSym = specToSymTable(config);
+    // While vim is toggled off nothing may be stolen — toggle-on re-applies.
+    if (this.enabled) await this.applyMode(this.state.mode);
+    const nMaps = listMappingLines(config).length;
+    const errs = diagnostics.filter((d) => d.severity === 'error').length;
+    const warns = diagnostics.length - errs;
+    if (notify) {
+      const parts = [`${nMaps} mapping${nMaps === 1 ? '' : 's'}`];
+      if (errs) parts.push(`${errs} error${errs === 1 ? '' : 's'}`);
+      if (warns) parts.push(`${warns} warning${warns === 1 ? '' : 's'}`);
+      const tail = errs || warns ? ' — :map for details' : '';
+      await this.plugin.app.toast(`vim keymap: ${parts.join(', ')}${tail}`);
+    } else if (errs) {
+      // Silent reloads still surface real errors — a broken config that only
+      // half-applies must never be invisible.
+      await this.plugin.app.toast(
+        `vim keymap: ${errs} error${errs === 1 ? '' : 's'} in "Vim Keymap" — :map for details`
+      );
+    }
+  }
+
+  /** `:config` — open the config document (create + seed it on first use). */
+  private async openConfig() {
+    let doc = await this.findConfigDoc();
+    if (!doc) {
+      const created = await this.plugin.rem.createRem();
+      if (!created) {
+        await this.plugin.app.toast('Could not create the "Vim Keymap" document');
+        return;
+      }
+      await created.setText([VimAdapter.CONFIG_DOC_NAME]);
+      await created.setIsDocument(true);
+      const seed = [
+        '" vim keymap — one mapping per bullet: map/nmap/vmap <key> <keys…>',
+        '" unmap <key> returns a key to RemNote · :mapload applies · :map lists',
+        '" the right side may use untypeable keys, e.g.:  nmap - $',
+      ];
+      for (let i = 0; i < seed.length; i++) {
+        const kid = await this.plugin.rem.createRem();
+        if (!kid) continue;
+        await kid.setParent(created._id, i);
+        await kid.setText([seed[i]]);
+      }
+      this.configRemId = created._id;
+      await this.plugin.storage.setSynced(VimAdapter.CONFIG_ID_KEY, created._id);
+      doc = created;
+    }
+    // Opening lands focus inside the doc; mark it so the eventual focus-out
+    // applies the edits even if no FocusedRemChange fired for the way in.
+    this.focusInConfig = true;
+    await this.recordJump(); // :config is a jump — Ctrl-O returns
+    await this.plugin.window.openRem(doc);
+  }
+
+  /** `:map` — list active mappings + config diagnostics (toasts, like :marks). */
+  private async listMappings() {
+    const lines = listMappingLines(this.mapConfig);
+    await this.plugin.app.toast(
+      lines.length ? `Mappings: ${lines.join('  |  ')}` : 'No custom mappings — :config to add'
+    );
+    if (this.mapDiagnostics.length) {
+      const shown = this.mapDiagnostics
+        .slice(0, 5)
+        .map((d) => `line ${d.line} ${d.severity}: ${d.message}`);
+      const more = this.mapDiagnostics.length - shown.length;
+      await this.plugin.app.toast(
+        `Keymap issues: ${shown.join('  |  ')}${more > 0 ? `  (+${more} more)` : ''}`
+      );
+    }
+  }
+
+  /**
+   * Called on every FocusedRemChange: reload the keymap when focus LEAVES
+   * the config document (the user just edited it). Cheap checks only — the
+   * focused rem, its direct parent, or the focused pane's document must be
+   * the config doc; no ancestor walk per keystroke. Deeply nested bullets
+   * viewed through portals can miss the transition: :mapload is the fallback.
+   */
+  private async trackConfigFocus() {
+    if (!this.configRemId) return;
+    const seq = ++this.focusSeq;
+    let inConfig = false;
+    try {
+      const focused = await this.plugin.focus.getFocusedRem();
+      if (focused && (focused._id === this.configRemId || focused.parent === this.configRemId)) {
+        inConfig = true;
+      } else if (focused) {
+        const paneId = await this.plugin.window.getFocusedPaneId();
+        const paneDoc = paneId ? await this.plugin.window.getOpenPaneRemId(paneId) : undefined;
+        inConfig = paneDoc === this.configRemId;
+      }
+    } catch {
+      return;
+    }
+    if (seq !== this.focusSeq) return; // superseded by a newer focus event
+    const was = this.focusInConfig;
+    this.focusInConfig = inConfig;
+    if (was && !inConfig && !this.configReloadQueued) {
+      this.configReloadQueued = true;
+      this.enqueueTask(async () => {
+        this.configReloadQueued = false;
+        await this.reloadConfig(false);
+      });
     }
   }
 
@@ -2248,7 +2474,7 @@ export class VimAdapter {
   // ------------------------------------------------------------ mode UI
 
   private async applyMode(mode: Mode) {
-    const wanted = new Set(bindingsForMode(mode).map((b) => b.spec));
+    const wanted = new Set(effectiveSpecs(mode, this.mapConfig));
     const toSteal = [...wanted].filter((s) => !this.stolenSpecs.has(s));
     const toRelease = [...this.stolenSpecs].filter((s) => !wanted.has(s));
     if (toSteal.length) await this.plugin.app.stealKeys(toSteal);
