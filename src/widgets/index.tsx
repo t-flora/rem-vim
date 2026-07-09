@@ -33,6 +33,16 @@ async function onActivate(plugin: ReactRNPlugin) {
     },
   });
 
+  // Mouse-reachable recovery path: even a config that unmapped ';' (no way
+  // to type ':config') can be fixed from the command palette.
+  await plugin.app.registerCommand({
+    id: 'vim-config',
+    name: 'Vim: Edit keybindings (:config)',
+    action: async () => {
+      await adapter?.openConfig();
+    },
+  });
+
   const startNormal = await plugin.settings.getSetting<boolean>('start-in-normal');
   await adapter.start(startNormal ? 'normal' : 'insert');
   console.debug('[vim] plugin activated, mode:', adapter.mode);

@@ -1964,8 +1964,9 @@ export class VimAdapter {
     }
   }
 
-  /** `:config` — open the config document (create + seed it on first use). */
-  private async openConfig() {
+  /** `:config` — open the config document (create + seed it on first use).
+   * Public: also the "Vim: Edit keybindings" palette command (index.tsx). */
+  async openConfig() {
     let doc = await this.findConfigDoc();
     if (!doc) {
       const created = await this.plugin.rem.createRem();

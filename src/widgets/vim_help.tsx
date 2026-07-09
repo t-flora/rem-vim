@@ -225,6 +225,7 @@ function VimHelp() {
             <Row keys={[':t', ':d', ':y']} desc="duplicate / delete / copy bullets" />
             <Row keys={[':g/x/d']} desc="delete every bullet matching x" />
             <Row keys={[':w']} desc="save (RemNote autosaves)" />
+            <Row keys={[':config']} desc="edit your keybindings (:map lists, :mapload reloads)" />
           </Section>
         </div>
       </div>
