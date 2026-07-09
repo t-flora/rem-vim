@@ -221,12 +221,12 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
   /** Last line that mapped/unmapped ';' in normal mode (for the safety net). */
   let semicolonLine: { line: number; text: string } | null = null;
 
-  lines.forEach((raw, idx) => {
+  for (let idx = 0; idx < lines.length; idx++) {
     const line = idx + 1;
-    const text = raw.trim();
+    const text = lines[idx].trim();
     const err = (message: string) => diagnostics.push({ line, text, severity: 'error', message });
     const warn = (message: string) => diagnostics.push({ line, text, severity: 'warning', message });
-    if (text === '' || text.startsWith('"')) return;
+    if (text === '' || text.startsWith('"')) continue;
     const parts = text.split(/\s+/);
     const verb = parts[0].toLowerCase();
 
@@ -238,35 +238,35 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
       } else {
         warn(`unknown verb '${verb}' — line ignored`);
       }
-      return;
+      continue;
     }
 
     if (parts.length < 2) {
       err(`usage: ${verb} <key>${mapModes ? ' <keys…>' : ''}`);
-      return;
+      continue;
     }
     const lhs = parseLhs(parts[1]);
     if ('error' in lhs) {
       err(lhs.error);
-      return;
+      continue;
     }
     if (HAZARD_SPECS[lhs.spec]) warn(HAZARD_SPECS[lhs.spec]);
 
     if (mapModes) {
       if (parts.length < 3) {
         err(`usage: ${verb} <key> <keys…> — missing the right-hand side`);
-        return;
+        continue;
       }
       // Whitespace inside the rhs is a separator, not a key — write <space>
       // to press space. This makes `nmap x d i w` readable.
       const rhs = tokenizeRhs(parts.slice(2).join(''));
       if ('error' in rhs) {
         err(rhs.error);
-        return;
+        continue;
       }
       if (rhs.syms.length > MAX_RHS) {
         err(`right-hand side too long (${rhs.syms.length} keys, max ${MAX_RHS})`);
-        return;
+        continue;
       }
       for (const m of mapModes) {
         config.maps[m][lhs.sym] = rhs.syms;
@@ -277,7 +277,7 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
     } else if (unmapModes) {
       if (parts.length > 2) {
         err(`${verb} takes no right-hand side`);
-        return;
+        continue;
       }
       const hadMap = unmapModes.some((m) => lhs.sym in config.maps[m]);
       const inBase = NORMAL_BINDINGS.some((b) => b.spec === lhs.spec);
@@ -289,7 +289,7 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
       }
       if (lhs.spec === ';' && unmapModes.includes('normal')) semicolonLine = { line, text };
     }
-  });
+  }
 
   // Safety net: don't let a config silently lock the user out of `:` — the
   // command line is how :config/:mapload are reached from the keyboard.

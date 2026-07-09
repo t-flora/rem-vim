@@ -1,6 +1,7 @@
 import { handleKey, initialState } from '../src/engine/engine';
 import { ATOMIC_CH } from '../src/engine/motions';
 import { Action, Snapshot, VimState } from '../src/engine/types';
+import { expandSym, MapConfig, tokenizeKeys } from '../src/adapter/mappings';
 
 interface DocState {
   lines: string[];
@@ -43,6 +44,8 @@ export class Harness {
   private undoStack: DocState[] = [];
   private redoStack: DocState[] = [];
   private typingRun = false;
+  /** User key mappings (the :config feature); null = no expansion. */
+  private mappings: MapConfig | null = null;
 
   constructor(lines: string[], row = 0, caret = 0, indents?: number[]) {
     this.lines = [...lines];
@@ -72,8 +75,18 @@ export class Harness {
     return this.state.commandLine;
   }
 
+  /** Enable user key mappings, mirroring the adapter's expansion layer. */
+  setMappings(cfg: MapConfig | null) {
+    this.mappings = cfg;
+  }
+
   keys(seq: string) {
-    for (const key of tokenize(seq)) this.step(key);
+    for (const key of tokenizeKeys(seq)) {
+      // Expansion happens exactly where the adapter does it: per pressed key,
+      // against the CURRENT state, never for replayed keys (step stays raw).
+      const rhs = this.mappings ? expandSym(this.mappings, this.state, key) : null;
+      for (const k of rhs ?? [key]) this.step(k);
+    }
   }
 
   /** One key through the engine — shared by keys() and replayKeys. */
@@ -428,40 +441,3 @@ const MUTATING = new Set<Action['t']>([
   'joinRem',
 ]);
 
-function tokenize(seq: string): string[] {
-  const out: string[] = [];
-  let i = 0;
-  while (i < seq.length) {
-    if (seq[i] === '<') {
-      const j = seq.indexOf('>', i);
-      if (j > i) {
-        const name = seq.slice(i + 1, j).toLowerCase();
-        const map: Record<string, string> = {
-          esc: 'Escape',
-          cr: 'Enter',
-          enter: 'Enter',
-          bs: 'Backspace',
-          space: ' ',
-          'c-r': 'C-r',
-          'c-d': 'C-d',
-          'c-u': 'C-u',
-          'c-w': 'C-w',
-          'c-h': 'C-h',
-          'c-l': 'C-l',
-          'c-o': 'C-o',
-          'c-i': 'C-i',
-          'c-a': 'C-a',
-          'c-x': 'C-x',
-        };
-        if (map[name]) {
-          out.push(map[name]);
-          i = j + 1;
-          continue;
-        }
-      }
-    }
-    out.push(seq[i]);
-    i++;
-  }
-  return out;
-}
