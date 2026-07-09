@@ -102,6 +102,60 @@ Open with **`;`** (RemNote keeps `/` for its own slash menu). Tab cycles a
 | `:marks` | List current marks in a toast |
 | `:vsplit` `:split` `:q` `:only` | Pane management (focus follows vim semantics) |
 | `:w` | Acknowledged no-op (RemNote autosaves) |
+| `:config` | Open your keybinding config document (see below) |
+| `:map` / `:mapload` | List active mappings + issues / re-apply the config |
+
+### Custom keybindings (`:config`)
+
+Your keybindings live in a normal RemNote document called **"Vim Keymap"** —
+`:config` jumps to it (and creates it on first use), you edit it *with vim
+itself*, and it applies automatically when you focus away from the document
+(`:mapload` re-applies it any time; `Ctrl-O` jumps back). One mapping per
+bullet, vim style:
+
+```
+" comments start with a double quote
+nmap - gl          " '-' jumps to end of line
+nmap s cw          " 's' = change word
+map <c-n> j        " normal + visual modes
+vmap q <esc>       " visual modes only
+nmap <space> ;     " space as a command-line leader
+unmap ,            " give ',' back to RemNote (normal+visual)
+```
+
+The verbs are `map` (normal + both visual modes), `nmap`, `vmap`, and
+`unmap`/`nunmap`/`vunmap` to release a key back to RemNote (`noremap`
+spellings work too — every mapping here is noremap: the right side is never
+re-expanded, so loops are impossible). Later lines win. `:map` lists what's
+active plus any parse errors with their bullet numbers.
+
+**Left side** (the key you press) — one key only: an unshifted character,
+`<space>`, `<cr>`, `<bs>`, `<tab>`, or a `<c-x>` ctrl chord. Shifted keys
+(`$`, capitals…) can never be captured (see Shift-blind keys above), digits
+are counts, and Escape is reserved.
+
+**Right side** — up to 32 keys in the same notation, *including keys you
+can't type live*: the right side feeds the engine directly, so `nmap - $`
+gives you a real `$`, and `G`, `A`, `~` etc. all work. Whitespace separates
+tokens (write `<space>` to press space). Counts and operators compose:
+with `nmap - gl`, `3-` and `d-` behave like `3gl` / `dgl`.
+
+Fine print:
+
+- Mappings also apply while an operator is pending (that's what makes `d-`
+  work), so remapping `i`/`a`/`f`/`t`/`g` changes their `d`/`c`/`y`-sequence
+  roles too (`nmap i x` breaks `diw`) — vim's separate `omap` doesn't exist
+  here (yet).
+- Keys are *not* remapped while vim waits for a literal character (`f`, `r`,
+  `m`, `'`), in insert mode, or in the command line.
+- An `unmap`ped key is fully native again — but if you press it while `f`/`r`
+  waits for a character, it types into the document (the pending stays armed).
+- You can't lock yourself out: Escape and insert-mode typing are untouchable,
+  and the command palette always has **"Vim: Edit keybindings (:config)"**
+  (plus "Vim: Toggle vim mode"). Unmapping `;` without another route to the
+  command line earns you a warning.
+- `<c-w>` never reaches the desktop app (Electron eats it); `<c-e>`/`<c-y>`
+  are RemNote's audio-embed hotkeys — you'll get a warning if you bind them.
 
 ---
 
@@ -111,7 +165,8 @@ Most of these come from what a plugin is *allowed* to do inside RemNote's
 sandbox (the gory details live in [DEVELOPMENT.md](./DEVELOPMENT.md) §9):
 
 - **Capitals/symbols need synonyms** — the Shift-blind remaps above; `i{`/`i"`
-  exist in the engine but can't be typed live.
+  exist in the engine but can't be typed live. (`:config` mappings can put
+  any of these on keys you like — `nmap - $`.)
 - **Caret column can desync** after clicking mid-line (the collapsed caret is
   unreadable from the sandbox). Re-anchor with `0`/`gl`, or enter+leave insert.
 - **`Ctrl-E`/`Ctrl-Y`** are unbound — there is no view-scroll API to hook.

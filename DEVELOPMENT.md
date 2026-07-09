@@ -15,6 +15,61 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 — CUSTOM KEYBINDINGS (`:config`) shipped on branch `keybind-config`
+
+**USER DECISIONS (2026-07-09):** config lives in a **RemNote document**
+("Vim Keymap", one mapping per bullet) edited with vim itself — keyboard-only
+flow was the requirement; settings-pane/widget UIs were rejected. Insert-mode
+maps (jk→Esc) are OUT of v1. Implementation on this branch, merge to main
+only after live reliability is confirmed. Plan file (approved):
+`~/.claude-account1/plans/i-want-you-to-replicated-ocean.md`.
+
+**Design (noremap translation layer; engine untouched):** one pressed key
+(lhs) expands to ≤32 canonical engine syms (rhs) in `handleSym`, at key-
+PROCESSING time, gated on `pending.p === 'none'` and mode ∈ normal/visual/
+visual-line (op MAY be pending: `d-`→`dgl`; find/replace/mark/gotoMark/g/
+textobj consume literals unmapped; command/insert never expand). rhs runs
+through the replayKeys per-key path; never re-expanded (loops impossible);
+dot-repeat records post-expansion syms so `.` is remap-stable. **rhs
+bypasses shift-blindness** (engine syms, not keystrokes): `nmap - $` works.
+Verbs map/nmap/vmap/unmap/nunmap/vunmap (+noremap spellings), `"` comments,
+last-wins; lhs = one unshifted key / `<space>`/`<cr>`/`<bs>`/`<tab>`/ctrl
+chord — digits (counts), shifted chars, `<esc>` rejected; warnings for
+`<c-w>`/`<c-e>`/`<c-y>`/`/` lhs and for configs that lose the `;` command
+line. **Steal sets:** mapped-lhs specs are stolen across ALL THREE
+normal-family modes (an nmap-only key left unstolen in visual would TYPE
+OVER the native selection); unmaps are strictly per-mode; insert stays
+escape-only; `specToSym` is now an instance table (mapped ctrl chords would
+otherwise be dropped at the onSteal length-1 fallback).
+
+**Config doc lifecycle:** id pinned in synced storage
+(`vim-keymap-doc-id`), `findByName` recovery, `:config` creates+seeds on
+first use (a recordJump — Ctrl-O returns). Reload triggers: activation
+(queued, silent unless errors), focus-LEAVE of the doc (FocusedRemChange →
+`trackConfigFocus`: focused-rem/parent/pane-doc id checks only, seq-guarded
++ debounced; portals can miss it → `:mapload` fallback), `:mapload`, after
+create. **Queue discipline:** reloads ride the key queue via `enqueueTask`;
+Ex verbs call `reloadConfig` DIRECTLY — awaiting a freshly enqueued task
+from queue context (runEx) deadlocks (rule mutation-tested). Reload while
+toggled off updates tables but steals nothing. `:map` lists mappings (its
+output is valid config syntax) + diagnostics; palette command "Vim: Edit
+keybindings (:config)" is the mouse recovery path.
+
+**New/changed:** `src/adapter/mappings.ts` (pure: parser/expandSym/
+effectiveSpecs/specToSymTable/notation incl. `<lt>`), adapter wiring,
+`keymap.ts` untouched, widgets (palette cmd, :help row), README section.
+Tests — four layers, 536 green total: L1 `tests/mappings.test.ts` (49),
+L2 `tests/mappings-harness.test.ts` (19 equivalence tests; harness now
+imports the shared tokenizer — its duplicate table is gone — and takes
+`setMappings` in `keys()` only), L3 `tests/adapter-mappings.test.ts` (18)
+against **`tests/fake-plugin.ts`** — a fail-fast fake RNPlugin (editor line
+model, rem tree, steal/toast recorders) running the REAL VimAdapter under
+vitest via the new `vitest.config.ts` alias of `@remnote/plugin-sdk` to
+`tests/sdk-stub.ts` (the real bundle needs `self`; types still check
+against the real SDK). The L3 deadlock guard was mutation-verified (re-
+enqueue → 5s timeout failure). L4 live e2e: `e2e/mappings.mjs` — see next
+entry for results.
+
 ### 2026-07-10 — round 6b: "44 tests seems minor" — deepened coverage (85 new tests) + found and fixed one real latent bug
 
 User pushed back on round 6's test pass as too thin: "44 tests seems to be a
@@ -1736,6 +1791,12 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   (selection siblings or focused bullet's children), `:t`/`:co[py]`
   duplicate, `:d`/`:y` delete/yank bullets (register + OS clipboard like
   dd/yy), `:g/pat/d` global delete, `:marks`. All live-verified 2026-07-08.
+- **Custom keybindings** — `:config` opens the "Vim Keymap" doc (one
+  `map`/`nmap`/`vmap`/`unmap` per bullet, noremap semantics, rhs may use
+  untypeable syms — `nmap - $`); applies on focus-leave / `:mapload`;
+  `:map` lists mappings + parse diagnostics; steal sets derive from the
+  config (mapped lhs stolen across all normal-family modes, unmaps
+  per-mode, insert untouched). See the 2026-07-10 §0 entry.
 - **New bullets** — `o`/`go`(=`O`) always create a *sibling* (never a child).
 - **Cursor visibility** — cursorline row tint + colored left caret bar
   outside insert mode.
