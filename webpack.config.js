@@ -4,10 +4,19 @@ const path = require('path');
 
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { ESBuildMinifyPlugin } = require('esbuild-loader');
-const { ProvidePlugin, BannerPlugin } = require('webpack');
+const { ProvidePlugin, BannerPlugin, DefinePlugin } = require('webpack');
 const CopyPlugin = require('copy-webpack-plugin');
+const { version } = require('./package.json');
 
 const isProd = process.env.NODE_ENV === 'production';
+
+// Evaluated once per webpack process start (npm run dev / npm run build) —
+// NOT re-evaluated on every incremental dev-server rebuild, since
+// webpack.config.js is only require()'d once. Good enough for its purpose:
+// confirming the plugin loaded in RemNote came from *this* dev-server/build
+// invocation rather than a stale one from before a "no hot reload" reload —
+// restart `npm run dev` (or rebuild) to refresh it.
+const BUILD_STAMP = `${version}@${new Date().toISOString().slice(0, 19)}`;
 
 // RemNote loads each widget twice: once as a module (needs IMPORT_META shim)
 // and once inside the sandbox iframe via index.html?widgetName=<name>.
@@ -47,6 +56,9 @@ const config = {
     ],
   },
   plugins: [
+    new DefinePlugin({
+      __VIM_BUILD__: JSON.stringify(BUILD_STAMP),
+    }),
     new HtmlWebpackPlugin({
       templateContent: `
       <body></body>

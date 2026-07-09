@@ -6,6 +6,7 @@
  */
 import type { RichTextInterface } from '@remnote/plugin-sdk';
 import { ATOMIC_CH } from '../engine/motions';
+import type { Mode, VimState } from '../engine/types';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -51,6 +52,17 @@ export function flattenRich(rich: RichTextInterface | undefined | null): string 
  */
 export function sanitizeInsert(text: string): string {
   return text.split(ATOMIC_CH).join('');
+}
+
+/**
+ * Clip a wildmenu label to `max` code points, appending an ellipsis. The
+ * command-line badge renders suggestions via CSS `content` with
+ * `white-space: pre` (so multi-line stacking via literal `\A` works) and no
+ * `text-overflow` can apply to that — a single very long Rem name/text would
+ * otherwise push the badge off-screen. Truncate at the string level instead.
+ */
+export function truncateLabel(s: string, max = 60): string {
+  return [...s].length > max ? [...s].slice(0, max).join('') + '…' : s;
 }
 
 /**
@@ -105,4 +117,282 @@ export async function settleRead<T>(
     prev = next;
   }
   return prev;
+}
+
+/**
+ * Resolve the focused line's text after leaving insert mode. If no
+ * `EditorTextEdited` event fired while insert mode was active, that's
+ * independent proof nothing was typed — skip reading the editor entirely (no
+ * network/IPC round trip to confirm something already certain, the fix for
+ * the reported Insert→Normal switching delay). Otherwise read until it
+ * settles, and if the settled value looks unchanged, give it one more,
+ * longer-spaced confirmation read — a slow flush and "truly nothing changed"
+ * are indistinguishable from a single read.
+ */
+export async function reconcileInsertText(
+  pre: string,
+  sawEdit: boolean,
+  readLine: () => Promise<string | null>,
+  opts: SettleOpts = {}
+): Promise<string | null> {
+  if (!sawEdit) return pre;
+  let fresh = await settleRead(readLine, (a, b) => a === b, opts);
+  if (fresh === pre) {
+    fresh = await settleRead(readLine, (a, b) => a === b, { ...opts, rounds: 1, delayMs: 120 });
+  }
+  return fresh;
+}
+
+/**
+ * Where should the caret land after `pre` became `fresh` on leaving insert
+ * mode? Prefer a real DOM caret read when available (native mode only, see
+ * `domCaret.ts`); otherwise infer it from the text diff.
+ */
+export function resolveInsertCaret(domCaret: number | null, pre: string, fresh: string, fallback: number): number {
+  return clamp(domCaret ?? diffCaret(pre, fresh, fallback), 0, fresh.length);
+}
+
+/** A jumplist/mark entry: the target Rem plus which document was open in the
+ * pane when it was recorded. `docId` is what makes a cross-document Ctrl-O
+ * or mark-jump reopen the Rem's *actual* prior document — walking `.parent`
+ * up from the target after the fact can't recover this (it has no principled
+ * stopping point short of the true tree root, which over-shoots past any
+ * document nested inside a folder-like parent — DEVELOPMENT.md round 5b/5c).
+ */
+export interface JumpEntry {
+  id: string;
+  docId?: string;
+}
+
+export interface JumpStepResult {
+  jumps: JumpEntry[];
+  jumpPos: number;
+  /** The entry to focus, or `undefined` if this hop is a no-op (list
+   * exhausted in that direction, or the target is already where we are). */
+  target: JumpEntry | undefined;
+}
+
+/**
+ * Pure jumplist stack transition for Ctrl-O (`dir: -1`) / Ctrl-I (`dir: 1`).
+ * Mirrors vim's model: `jumpPos === jumps.length` means "at the live end,"
+ * not currently browsing history. The first Ctrl-O off the live end stashes
+ * `cur` as a new entry (so Ctrl-I can return to it) before stepping back —
+ * callers should only resolve `docId` (an SDK call) when that branch is
+ * actually about to run, i.e. `dir === -1 && jumpPos === jumps.length`.
+ */
+export function computeJumpStep(
+  jumps: readonly JumpEntry[],
+  jumpPos: number,
+  dir: -1 | 1,
+  cur: string | undefined,
+  docId: string | undefined
+): JumpStepResult {
+  let nextJumps = jumps as JumpEntry[];
+  let nextPos = jumpPos;
+  if (dir === -1) {
+    if (jumpPos === jumps.length) {
+      if (cur && jumps[jumps.length - 1]?.id !== cur) {
+        nextJumps = [...jumps, { id: cur, docId }];
+      }
+      // Clamped: an empty list with no `cur` to stash (focus lost) would
+      // otherwise leave `nextPos` at -1, permanently wedging every future
+      // hop (recordJump's `slice(0, jumpPos)` degrades gracefully on -1, but
+      // there'd never be a way back to a positive position without a fresh
+      // jump being recorded first).
+      nextPos = Math.max(0, nextJumps.length - 1);
+      if (nextPos > 0 && nextJumps[nextPos]?.id === cur) nextPos--;
+    } else if (jumpPos > 0) {
+      nextPos = jumpPos - 1;
+    } else {
+      return { jumps: nextJumps, jumpPos, target: undefined };
+    }
+  } else {
+    if (jumpPos >= jumps.length - 1) return { jumps: nextJumps, jumpPos, target: undefined };
+    nextPos = jumpPos + 1;
+  }
+  const target = nextJumps[nextPos];
+  return {
+    jumps: nextJumps,
+    jumpPos: nextPos,
+    target: target && target.id !== cur ? target : undefined,
+  };
+}
+
+/**
+ * Is `remId` among a document's descendant ids? `descendantIds` is
+ * `undefined` when the document Rem itself couldn't be resolved (vanished
+ * mid-check) — treated as "yes, don't block the walk", the same
+ * fail-open default `isInFocusedDocument` uses for every inconclusive case,
+ * since the cost of a wrong "yes" here is just falling through to the
+ * (already correct, just slower) `walkCaretTo` attempt.
+ */
+export function isDescendantAmong(remId: string, descendantIds: string[] | undefined): boolean {
+  return descendantIds === undefined || descendantIds.includes(remId);
+}
+
+/**
+ * Should Escape currently be stolen? Idle normal mode (no operator/pending/
+ * count in flight) releases it so RemNote's own Ctrl-P/Ctrl-K palette can see
+ * the Escape a user presses to close it; any other state needs Escape
+ * captured (to leave insert mode, cancel a pending operator, etc).
+ */
+export function isEscapeWanted(state: Pick<VimState, 'mode' | 'op' | 'pending' | 'count' | 'opCount'>): boolean {
+  const idle =
+    state.mode === 'normal' &&
+    state.op === null &&
+    state.pending.p === 'none' &&
+    state.count === '' &&
+    state.opCount === '';
+  return !idle;
+}
+
+export type StrayEditFallout = 'ignore' | 'markInsertEdit' | 'resetPending';
+
+/**
+ * Classify an `EditorTextEdited` event that WE didn't cause (`processing` is
+ * false): RemNote's key-steal matcher is shift-blind (keymap.ts) and doesn't
+ * always catch a held Shift, so a capital letter can occasionally reach the
+ * document as literal text while the engine still believes nothing changed.
+ *   - insert mode: the typed text is normal — no engine state to fix, just
+ *     remember an edit happened (reconcileAfterInsert skips a redundant read
+ *     when nothing was typed).
+ *   - command mode: the command-line isn't Rem text; irrelevant here.
+ *   - anything else: a stray edit landed while the engine thought it owned
+ *     every keystroke — the model and any in-flight pending command (e.g. `r`
+ *     waiting for its replacement char) are now stale.
+ */
+export function classifyStrayEdit(mode: Mode, processing: boolean): StrayEditFallout {
+  if (processing) return 'ignore';
+  if (mode === 'insert') return 'markInsertEdit';
+  if (mode === 'command') return 'ignore';
+  return 'resetPending';
+}
+
+export type UndoDecision = 'structuralRevert' | 'nativeUndo';
+export type RedoDecision = 'structuralReapply' | 'nativeRedo';
+
+/**
+ * `u` after a grouped structural op (paste-subtree / mass indent-outdent):
+ * revert it in one step via `structuralOp` rather than counting native
+ * undo-history entries (RemNote's real granularity turned out finer than
+ * "one native undo per Rem touched" — the counted approach this replaced
+ * never fully reversed the operation; see DEVELOPMENT.md round 1→2).
+ */
+export function decideUndo(hasStructuralOp: boolean, structuralApplied: boolean): UndoDecision {
+  return hasStructuralOp && structuralApplied ? 'structuralRevert' : 'nativeUndo';
+}
+
+/** The `redo` twin of `decideUndo` — reapply only undoes-the-undo once. */
+export function decideRedo(hasStructuralOp: boolean, structuralApplied: boolean): RedoDecision {
+  return hasStructuralOp && !structuralApplied ? 'structuralReapply' : 'nativeRedo';
+}
+
+export interface RetryOpts {
+  /** Total attempts, including the first (default 5). */
+  attempts?: number;
+  /** Pause between a failed attempt and the next (default 80 ms). */
+  delayMs?: number;
+  /** Injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Retry an async boolean-returning operation until it succeeds or the
+ * attempt budget is exhausted, pausing between failures. Right after a pane
+ * navigates to a brand-new document (`window.openRem`), `moveCaretVertical`
+ * silently no-ops for the first several calls — the editor hasn't finished
+ * mounting yet — so a single `walkCaretTo` attempt right after `openRem`
+ * reads as "hit a boundary instantly" and strands the caret on the document
+ * title (see `walkToTarget`'s doc comment and DEVELOPMENT.md round 5d).
+ */
+export async function retryUntilTrue(op: () => Promise<boolean>, opts: RetryOpts = {}): Promise<boolean> {
+  const { attempts = 5, delayMs = 80, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) } = opts;
+  for (let i = 0; i < attempts; i++) {
+    if (await op()) return true;
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return false;
+}
+
+/**
+ * Walk `getParentId` up from `startId` to the top-level id with no parent
+ * (capped). Used as a last-resort fallback when a jumplist/mark entry has no
+ * recorded `docId` (e.g. set before that tracking existed) — walking all the
+ * way to the true tree root is a worse answer than the recorded `docId`
+ * would have been (it can overshoot past a document nested inside a
+ * folder-like parent, landing on the workspace root instead — round 5b/5c),
+ * but it degrades gracefully rather than failing outright.
+ */
+export async function walkToRoot(
+  startId: string,
+  getParentId: (id: string) => Promise<string | undefined>,
+  maxHops = 100
+): Promise<string> {
+  let cur = startId;
+  for (let hop = 0; hop < maxHops; hop++) {
+    const parent = await getParentId(cur);
+    if (!parent) return cur;
+    cur = parent;
+  }
+  return cur;
+}
+
+/**
+ * Walk the live caret toward `targetId`, trying `firstDir` then the other
+ * way, stopping the moment `currentId()` matches or a direction's steps stop
+ * making progress (two consecutive reads agree — a document boundary, or the
+ * post-`openRem` mount race described on `retryUntilTrue`). Every hop needs
+ * an exact-match check here — unlike `walkToBoundary`, this can't batch steps
+ * between checks without risking silently walking straight past the target.
+ */
+export async function walkToTarget(
+  targetId: string,
+  firstDir: -1 | 1,
+  currentId: () => Promise<string | undefined>,
+  step: (dir: -1 | 1) => Promise<void>,
+  maxHopsPerDir = 60
+): Promise<boolean> {
+  if ((await currentId()) === targetId) return true;
+  for (const dir of [firstDir, -firstDir] as const) {
+    let prevId: string | undefined;
+    for (let i = 0; i < maxHopsPerDir; i++) {
+      await step(dir as -1 | 1);
+      const id = await currentId();
+      if (!id) break;
+      if (id === targetId) return true;
+      if (id === prevId) break; // boundary: no progress this hop
+      prevId = id;
+    }
+  }
+  return false;
+}
+
+export interface BoundaryWalkOpts {
+  /** Blind steps taken between boundary checks (default 20). */
+  batch?: number;
+  /** Total step budget (default 2000). */
+  maxHops?: number;
+}
+
+/**
+ * Walk to a BOUNDARY (document start/end), not a specific target — so unlike
+ * `walkToTarget`, batching steps between checks is safe: overshooting a
+ * boundary is a no-op (there's nothing past it to skip over), whereas
+ * checking after every single step (the original `gg`/`G` implementation)
+ * cost 2 round trips per hop and was visibly slow on long documents
+ * (DEVELOPMENT.md round 4).
+ */
+export async function walkToBoundary(
+  step: () => Promise<void>,
+  check: () => Promise<string | undefined>,
+  opts: BoundaryWalkOpts = {}
+): Promise<void> {
+  const { batch = 20, maxHops = 2000 } = opts;
+  let prevId: string | undefined;
+  for (let i = 0; i < maxHops; i += batch) {
+    for (let k = 0; k < batch; k++) await step();
+    const id = await check();
+    if (!id || id === prevId) return;
+    prevId = id;
+  }
 }
