@@ -15,6 +15,635 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 — round 6b: "44 tests seems minor" — deepened coverage (85 new tests) + found and fixed one real latent bug
+
+User pushed back on round 6's test pass as too thin: "44 tests seems to be a
+minor amount, think about what you potentially missed to test and add much
+more tests." Re-audited every function extracted in round 6 for undertested
+branches, plus re-checked the original five reported issues end-to-end for
+gaps — issue #3 (Insert→Normal delay) had NO coverage at all despite being
+one of the five originally-reported bugs; round 5's document-membership
+check (`isInFocusedDocument`) also had no isolated coverage.
+
+**New extractions** (previously inline, SDK-coupled, now pure + tested):
+- `reconcileInsertText` — the Insert→Normal reconcile decision (skip the
+  read entirely / settle-then-confirm / catch-a-slow-flush), pulled out of
+  `reconcileAfterInsert`. This is issue #3's actual fix, completely
+  uncovered until now.
+- `resolveInsertCaret` — the DOM-caret-vs-diffCaret preference, same method.
+- `isDescendantAmong` — the "is this id in the open document's descendant
+  list" predicate at the center of round 5's Ctrl-O fix, split out of
+  `isInFocusedDocument` (the pane/SDK lookups around it stay adapter-only).
+
+**A real bug found while writing tests, not just more assertions on existing
+behavior**: constructing `computeJumpStep([], 0, -1, undefined, undefined)`
+(Ctrl-O with an empty jumplist AND no focused Rem to stash — focus somehow
+already lost) computed `nextPos = nextJumps.length - 1 = -1`. Every
+subsequent hop from a `jumpPos` of -1 would stay wedged there indefinitely
+(the "else" branch only escapes on `jumpPos > 0`), and `recordJump`'s
+`slice(0, jumpPos)` on -1 silently no-ops rather than crashing, so this
+would have failed silently rather than loudly. Unlikely to fire in practice
+(needs both an empty jumplist and a lost focus simultaneously) but a real
+latent bug regardless. **Fixed**: clamped to `Math.max(0, nextJumps.length -
+1)`, with a comment explaining why, plus two dedicated regression tests
+(the immediate case, and a follow-up hop proving it doesn't stay wedged).
+
+**Depth added to every round-6 suite** (34 → 119 tests in
+`adapter-pure.test.ts`; 365 → 450 total):
+- `computeJumpStep`: dedup-preserves-existing-docId, focus-lost-with-history,
+  focus-lost-with-empty-list (the bug above), a full realistic
+  back/back/back/forward/forward session retracing an exact path end-to-end.
+- `isEscapeWanted`: every `Operator` value, every non-`none` `Pending`
+  variant (was spot-checking one of each category before), a
+  no-accidental-AND/OR combination check, and a "flip exactly one field at a
+  time" sweep.
+- `decideUndo`/`decideRedo`: a full paste→undo→redo→undo session sequence,
+  and the "an unrelated edit clears the structural op" case.
+- `retryUntilTrue`: `attempts: 1`, a rejected `op` propagating immediately
+  instead of being silently retried-through (a real contract worth locking
+  down), and — importantly — the ACTUAL defaults (5 attempts, 80ms) with no
+  options object at all, not just test-supplied stand-ins for them.
+- `walkToRoot`: `maxHops: 0`, a deterministic (not "either A or B") cap-hit
+  on a long non-cyclic chain with an exact call-count assertion, and a
+  30-level chain confirming the real default cap (100) comfortably covers
+  any realistic document depth.
+- `walkToTarget`: `firstDir: -1` symmetry (everything before only exercised
+  `+1`), an undefined initial `currentId()`, an exact-inclusive-boundary hit
+  on the last allowed hop, `maxHopsPerDir: 1`, and losing focus mid-walk in
+  one direction while the other still succeeds.
+- `walkToBoundary`: `batch: 1` (degenerates to the pre-round-4 per-hop
+  behavior), a step-then-check ordering assertion via a shared call log, and
+  the documented (not a bug) overshoot when `maxHops` isn't an exact
+  multiple of `batch`.
+
+**Status**: `check-types` clean, all 450 unit tests pass, `npm run build`
+succeeds, dev server restarted and `curl`-confirmed serving
+`reconcileInsertText`. The `computeJumpStep` clamp is a genuine (if narrow)
+behavior change on top of round 6's pure refactor — everything else this
+round is additive test coverage, not logic changes, so live-verification
+risk is limited to that one clamp.
+
+### 2026-07-10 — round 6: Ctrl-O confirmed fully fixed live; extracted the decision logic behind rounds 1-5d into pure.ts and unit-tested it
+
+User confirmed round 5d live: "yeah, okay, jumps back correctly, that's good"
+— the full Ctrl-O/cross-document chain (fast in-document walk, correct
+document reopened, caret lands on the exact original Rem past the mount
+race) is done. Then asked for test coverage: "can you maybe create test
+cases to cover these issues the best way you could. make as much possible."
+
+**The constraint**: `adapter.ts` (`VimAdapter`) is the SDK-coupled half of
+this codebase — per its own testing philosophy, "adapter.ts itself can only
+be exercised live," and this whole multi-round investigation (rounds 1-5d)
+happened with zero live RemNote access. Writing a Vitest suite that mocks
+the RemNote plugin SDK wholesale wasn't the move — it would test the mock,
+not the real integration, and this project already has a real answer for
+integration coverage (`e2e/`, live-only, not in CI). What WAS available: the
+actual DECISION LOGIC behind every one of this session's fixes is pure data
+math with no SDK dependency once separated from the `await this.plugin.*`
+calls around it — jumplist stack transitions, an idle-state boolean, a
+mode/flag classification, a 2×2 undo/redo truth table, a generic retry
+loop, and two walk algorithms parameterized over an injected step/check
+function instead of calling `editor.moveCaretVertical`/`focus.getFocusedRem`
+directly. None of that had been factored out before now because no single
+round's fix, in isolation, obviously justified the refactor — it only
+became clearly worthwhile looking back at the whole arc together.
+
+**Extracted into `pure.ts`** (all now imported and actually used by
+`adapter.ts`, not parallel duplicate logic that could drift):
+- `computeJumpStep` — the full Ctrl-O/Ctrl-I jumplist stack transition
+  (stash-on-first-hop-back, live-end/history-browsing modes, dedup, docId
+  threading) pulled out of the `case 'jump'` switch arm verbatim.
+- `isEscapeWanted` — `syncEscapeSteal`'s idle-normal-mode boolean (round 5's
+  namesake, "round 5" here meaning the Ctrl-P/Ctrl-K session, not the Ctrl-O
+  rounds above — same numbering coincidence, different fix).
+- `classifyStrayEdit` — the `EditorTextEdited` listener's 3-way branch
+  (ignore / mark-insert-edit / reset-pending) behind the shift-blind
+  capital-letter fallout fix (issues #1/#2 from the original five).
+- `decideUndo` / `decideRedo` — the structural-op-vs-native truth table
+  behind the paste/mass-indent undo grouping fix.
+- `retryUntilTrue` — generalizes round 5d's post-`openRem` retry loop.
+- `walkToRoot` — generalizes `findDocRoot`'s parent-chain walk (round 5b's
+  fallback-of-a-fallback, now only reached when a `JumpEntry` has no
+  recorded `docId`).
+- `walkToTarget` — generalizes `walkCaretTo`'s exact-match search (used
+  everywhere the adapter puts the caret on a specific just-created/moved
+  Rem: paste, indent/outdent revert-reapply, `o`/`O`, marks, jumps — ALL of
+  these now run through one tested implementation instead of an
+  adapter-only method with no coverage).
+- `walkToBoundary` — generalizes round 4's `gg`/`G` batched boundary walk.
+
+`adapter.ts`'s methods (`focusRemById`, `walkCaretTo`, `findDocRoot`,
+`syncEscapeSteal`, the `EditorTextEdited` listener, `case 'jump'`, the
+`undo`/`redo` cases, `case 'goDoc'`) are now thin wrappers that resolve real
+SDK calls into `currentId()`/`step()`/`getParentId()` closures and hand them
+to the pure functions — the SDK-facing shape is unchanged (same public
+methods, same call sites), only the decision logic moved.
+
+**Test suite** (`tests/adapter-pure.test.ts`, +44 tests, 365 → 409 total):
+covers every branch of each function above, including two regression tests
+that reproduce round 5d's exact bug end-to-end without any RemNote
+involved: `walkToTarget` alone fails after exactly 4 `step()` calls when
+`currentId()` never changes (the mount-race symptom, reproduced
+byte-for-byte), then a follow-up test proves `retryUntilTrue` recovers once
+a later attempt's `currentId()` sequence starts actually progressing —
+i.e., the test suite encodes not just "this function returns X for input Y"
+but the specific live-reported failure and its fix.
+
+**What's still NOT unit-testable, and why**: the actual `await
+this.plugin.rem.*` / `editor.*` / `window.*` calls themselves (would require
+mocking the entire RemNote SDK to test nothing but the mock), `structuralOp`'s
+`revert`/`reapply` closures (real `setParent`/`remove` mutations against a
+live Rem tree), and anything timing-dependent on RemNote's actual read-lag
+behavior. These remain live-only per the existing testing philosophy;
+`e2e/stress.mjs` (focus-alive invariant after every keystroke) is the
+right tool if a regression here is ever suspected, not a new mock harness.
+
+**Status**: `check-types` clean, all 409 unit tests pass, `npm run build`
+succeeds, dev server restarted and `curl`-confirmed serving the refactor.
+This round is a refactor + test-coverage pass on ALREADY-confirmed-working
+code (round 5d was live-verified before this started) — low behavioral risk,
+but worth a quick general smoke-test pass (jumps, marks, undo/redo, gg/G,
+:e wildmenu) next time, since the refactor touched the call sites for all
+of them even though none of their logic changed.
+
+### 2026-07-10 — round 5d: round 5c opened the right document but the caret never left its title — walk-down now retries past the post-`openRem` mount race
+
+Live-tested round 5c: the document is now correct ("RemNote Vim Plugin"),
+and the screen even scrolls to the right area — but the actual text caret
+stays on the document's title, never lands on the target child bullet.
+User's own framing nailed the symptom precisely: "the screen positions at the
+correct spot, but the cursor is still at the title."
+
+**Root cause**: `focusRemById`'s cross-document fallback does `openRem(root)`
+then immediately `walkCaretTo(id, 1)`. Right after `openRem` resolves,
+`getFocusedRem()` already correctly reports the new document's title Rem —
+but `moveCaretVertical` silently no-ops for the first several calls, because
+the editor hasn't finished mounting yet (the same family of "just-navigated/
+just-mutated state lags behind the read API" race as `positionAmongstSiblings`
+post-edit and the insert-mode reconcile lag, just a different API surfacing
+it this time). `walkCaretTo`'s loop reads this as "hit a boundary": hop 1
+no-ops (caret still on title, `prevId` was `null` so no break yet), hop 2
+no-ops again (`f._id === prevId` now true, since both reads are the title) —
+break, having tried only 2 real hops. Same thing in the other direction, 2
+more no-op hops, then give up. Total ~4 wasted calls, caret stranded on the
+title exactly as reported.
+
+**Fix**: wrapped the walk-down in a retry loop — up to 5 attempts, 80ms apart,
+stopping as soon as one `walkCaretTo(id, 1)` call succeeds. No new "is the
+editor ready" signal exists in the SDK to poll directly (checked `focus.d.ts`
+and `editor.d.ts` — nothing like a mount/ready event), so this retries the
+actual operation we care about rather than betting on a specific readiness
+heuristic; each failed attempt is cheap (the ~4-hop failure mode above, not a
+full 60-hop budget) since `walkCaretTo` itself still bails fast on a
+no-progress boundary.
+
+**Status: NOT yet live-verified** — same session, no live RemNote access.
+`check-types` clean, 365/365 tests green. Dev server restarted, `curl`-
+confirmed the retry loop is present in the served bundle. This is the fourth
+live-feedback round on the same underlying Ctrl-O/cross-document fix (5 →
+5b → 5c → 5d) — each prior round fixed exactly what was reported and exposed
+the next layer once that layer's fix was confirmed working. Needs the same
+repro once more: Ctrl-O from a different document should now open "RemNote
+Vim Plugin" *and* land the caret precisely on the original child bullet, not
+just scroll there.
+
+### 2026-07-10 — round 5c: round 5b's ancestry-walk overshot too — jump/mark entries now carry the recorded document id directly
+
+Live-tested round 5b immediately: still broken, more precisely diagnosed this
+time. User's real hierarchy: a workspace "project folder" (true tree root,
+no parent) contains the "RemNote Vim Plugin" document, which contains an
+"Issues" subtree, whose child was the original focus. Ctrl-O after navigating
+elsewhere via RemNote's own search landed on **the project folder's title**,
+not "RemNote Vim Plugin". User: "it is not fixed it is not working."
+
+**Root cause**: round 5b's `findDocRoot` walks `.parent` all the way to the
+Rem with *no parent at all* — but that's the workspace-level container, not
+the document the user was actually working in. RemNote has no data-level
+distinction between "a document/page" and "a regular nested bullet that
+happens to be one level down from a folder" — any Rem can be zoomed into as
+a pane's root, so "which Rem counts as the document" is a **session/UI fact**
+(whatever was open in the pane), not something recoverable by walking the
+tree after the fact. Round 5b's heuristic had no principled place to stop
+between "Issues" and the workspace root and guessed wrong (too far, this
+time, rather than round 5's too-shallow zoom-into-the-leaf).
+
+**Fix**: stopped guessing entirely. `jumps`/`marks` now store a `JumpEntry
+{ id, docId }` instead of a bare Rem id — `docId` is captured via the new
+`currentDocId()` helper (`getFocusedPaneId()` + `getOpenPaneRemId()`) at the
+exact moment a position is recorded: every `recordJump()` call, the live-
+position stash inside `case 'jump'` (first Ctrl-O off the live end), and
+`setMark`. `focusRemById(id, docIdHint)` now takes that hint and, on a
+cross-document fallback, opens `docIdHint`'s Rem directly (no ancestry
+guessing) before walking down to `id`. `findDocRoot`'s parent-walk survives
+only as a last-resort fallback for a missing/unresolvable hint (e.g. a
+`JumpEntry` whose `docId` Rem was since deleted) — kept rather than deleted
+since it degrades gracefully instead of failing outright, and is honest
+about being second-best. `gotoMark`/`listMarks` updated for the new
+`Map<string, JumpEntry>` shape.
+
+This is the *right* fix in hindsight — a UI-session fact (what's open in a
+pane) can only be known by observing it when it's true, not reconstructed
+afterward from the Rem tree alone. Both round 5 and 5b were solving the
+wrong half of the problem (making the walk fast, then making the fallback's
+*target* less wrong) without questioning whether the fallback could know the
+right document at all.
+
+**Status: NOT yet live-verified** — same session, no live RemNote access.
+`check-types` clean, 365/365 tests green. Dev server restarted, `curl`-
+confirmed `currentDocId` present in the served bundle. Needs the exact
+repro re-run: Ctrl-O from a different document should land back in "RemNote
+Vim Plugin" (not the project folder, not "Issues") with the original child
+bullet focused. Also worth a quick sanity check that plain same-document
+Ctrl-O and marks (`ma` / `` `a ``) still work — those go through the fast
+`isInFocusedDocument` + in-place walk path, untouched by this round, but the
+data-shape change (`jumps`/`marks` now hold objects, not strings) touches
+every read site of both, so it's worth confirming nothing was missed.
+
+### 2026-07-10 — round 5b: fixed the round-5 regression it caused — fallback now reopens the real document root, not the leaf
+
+Live feedback on round 5, same session: "it jumps back without all of that
+cursor scrolling through entire documents, but the focus got messed up, which
+made things worse." Concrete repro the user gave: focused on a child of an
+"Issues" bullet inside document "RemNote Vim Plugin"; opens RemNote's own
+search/quick-switcher and navigates to a different document; presses Ctrl-O.
+Landed on the right Rem id, but the pane ended up zoomed into the "Issues"
+bullet (or the target's immediate neighborhood) instead of showing the
+original "RemNote Vim Plugin" document with that child in context. Explicit
+user framing: a correct-but-slower fallback beats a fast-but-wrong one — this
+was a real regression, not a nitpick.
+
+**Root cause**: round 5's fallback path called `window.openRem(target)`
+directly on the *leaf* Rem once `isInFocusedDocument` correctly determined
+the walk was hopeless. `openRem` zooms the pane into whatever Rem you hand it
+— for a plain outline bullet (not itself a page), that discards the
+surrounding top-level document entirely and shows a narrower view rooted at
+(or near) that bullet instead. This exact call already existed before round 5
+too (same fallback, reached the slow way after ~240 wasted round trips) — so
+this bug likely predates this whole investigation; round 5 just made the path
+fire near-instantly, so the wrong end state became prominent and repeatable
+instead of an easy-to-miss edge case at the end of a 2-second stall.
+
+**Fix**: added `findDocRoot(r)` — walks `.parent` up from the target Rem
+until it hits the true top-level Rem (no parent), same walk-the-parent-chain
+pattern already used by `isDescendantOf`/`inRemovedSubtree` in this file, just
+capped more generously (100 hops, since this one needs the *actual* root, not
+a shallow trail-covering check). `focusRemById`'s fallback now calls
+`openRem(root)` — reproducing the document the user was actually in — and
+then, if the root isn't the target itself, does one more `walkCaretTo(id, 1)`
+downward from the freshly opened top to land the caret exactly back on the
+original Rem, same as the pre-navigation state.
+
+Cost: this fallback path is already the "slow-ish, cross-document" case (a
+real pane navigation is unavoidable there), so the extra short downward walk
+from a document's top — generally far fewer hops than a blind 60-hop budget,
+since we start at row 0 — is a small, justified addition given the user's own
+stated preference for correctness over speed here.
+
+**Status: NOT yet live-verified** — same-session fix, no live RemNote access.
+`check-types` clean, 365/365 tests green (still adapter.ts-only logic, no
+unit coverage). Dev server restarted, `curl`-confirmed `findDocRoot` present
+in the served bundle. Needs the exact repro above re-tested: Ctrl-O back from
+a different document should now both (a) skip the slow scroll-through (round
+5) and (b) land back in the correct document with the correct bullet focused,
+not zoomed into a narrower view (round 5b).
+
+### 2026-07-10 — round 5: Ctrl-O jump-to-previous-document dragged the caret through the whole doc — fixed with a document-membership pre-check
+
+New report (after round 4's gg/G fix was confirmed): "when doing Ctrl+O and
+jumping to previous document, the cursor sort of goes through the entire
+document" — user correctly linked it to the same family of issue as the gg/G
+slowness.
+
+**Root cause**, found by reading `focusRemById`/`walkCaretTo` (adapter.ts):
+`focusRemById` already had a doc comment describing the intended behavior
+("walk visible rows if on screen in the current document, otherwise open the
+rem") but the *implementation* never actually checked which case it was in —
+it just always tried `walkCaretTo` first (up to 60 hops **per direction**,
+each hop = 1 `moveCaretVertical` + 1 `getFocusedRem`, i.e. up to ~240 round
+trips) and only fell back to `window.openRem()` after that budget was
+exhausted. Ctrl-O jumping back to a Rem in a *different* document (or a mark
+set before switching documents) is exactly the case where the walk can never
+succeed — the live caret can only move within the currently open document's
+visible tree — so every cross-document jump paid the full ~240-round-trip
+timeout before the correct `openRem()` fallback ever fired, visibly dragging
+the caret through every row on the way.
+
+Unlike gg/G, this genuinely can't be fixed by batching the walk itself:
+`walkCaretTo` needs an exact-match check on every hop (it's homing in on one
+specific Rem, not a document boundary), and I re-derived why batching+deferred
+verification is a false economy here — after a blind batch of K hops, ruling
+out that the target was one of the K-1 *skipped* intermediate rows requires
+backtracking through all of them anyway, so batching then backtracking costs
+*more* round trips than just checking every hop, not fewer. (Documented this
+reasoning here since it's the second time this exact "can we batch it"
+question comes up for a walk — the answer depends on whether the loop is
+searching for a boundary, batchable, vs. an exact target, not batchable this
+way.)
+
+**Fix**: added `isInFocusedDocument(remId)` — before attempting the walk,
+check whether `remId` is the currently-open document's root or in its
+subtree, via `getFocusedPaneId()` + `getOpenPaneRemId()` + `rem.findOne` +
+`doc.getDescendants()` (the same pattern the existing `:s///a` flag already
+uses for "act on the whole open document", so not a new API shape for this
+codebase). This is O(1) round trips regardless of document size or the
+target's depth, unlike a hand-rolled parent-walk-up (which I considered and
+rejected — its cost scales with the target's *tree depth*, unrelated to
+whether it's visually walkable, and would have made ordinary deep-nested
+same-document jumps slower without fixing anything). Any inconclusive result
+(no focused pane, doc Rem vanished) defaults to `true` — i.e. falls back to
+the pre-existing "just try the walk" behavior, never worse than before this
+check existed.
+
+Cost tradeoff: every in-document jump (the already-fast, common case) now
+pays ~4 extra round trips (pane lookup ×2, `rem.findOne`, `getDescendants`)
+before the walk even starts. Judged worth it: those jumps are typically only
+a few hops already, so this roughly doubles a fast operation, versus cutting
+the reported cross-document case from up to ~240 wasted round trips down to
+~4-5 total. `focusRemById` is shared by both the `jump` (Ctrl-O/Ctrl-I) and
+`gotoMark` cases, so mark-jumps across documents get the same fix for free.
+
+**Status: NOT yet live-verified** — implemented and reasoned from source only
+(no live RemNote access this session, same constraint as every other round).
+`npm run check-types` clean, 365/365 unit tests still green (this is
+adapter.ts-only logic, no unit coverage exists for it — same gap as the rest
+of the adapter). Dev server restarted with a fresh stamp; `curl`-verified
+`isInFocusedDocument` is present in the served `index.js`. Needs a real
+Ctrl-O-across-documents test to confirm both that the slow case is now fast
+*and* that ordinary same-document Ctrl-O/marks didn't regress.
+
+### 2026-07-10 — round 4 CONFIRMED: gg/G batching live-verified "much better"
+
+User re-tested on a long document: the batched boundary-check loop (20 hops
+between `getFocusedRem()` checks instead of 1) is a clearly noticeable
+improvement. Not pushed further since it wasn't asked for — if it ever comes
+back as "still too slow" for a much larger document, bump `BATCH` in the
+`goDoc` case first (cheap dial), before reaching for the heavier
+`window.openRem()`-loses-the-live-caret alternative noted below.
+
+### 2026-07-10 — round 4: gg/G slow in long documents — batched the boundary-check loop
+
+New report (not one of the original 5): `gg`/`G` visibly walks bullet by
+bullet in long documents, up to ~2s. Confirmed in `goDoc`'s case in `exec()`:
+the loop did ONE `moveCaretVertical` + ONE `getFocusedRem()` (to detect
+arrival) PER BULLET, capped at 200 hops — literally two async round trips per
+bullet, matching "goes to the end rem by rem" exactly. There is still no way
+to jump the caret directly to an arbitrary position (the same documented
+platform limit `walkCaretTo` already works around elsewhere in this file), so
+this can't become O(1) — but the per-hop `getFocusedRem()` check doesn't need
+to run after literally every single move. Batched to 20 moves between checks,
+leaning on an assumption already relied upon elsewhere in this exact file
+(the `scroll` case loops `moveCaretVertical` with NO check at all) — that
+calling it past the document boundary is a safe no-op. Cuts total round
+trips roughly in half for a document needing the full walk (~1.05N async
+calls instead of ~2N). Also raised the hop ceiling 200 → 2000: a document
+with MORE visible rows than 200 would have silently stopped short of the
+true start/end before this — separate latent correctness bug, same fix.
+
+**Not addressed**: whether ~2x fewer round trips is enough to satisfy "up to
+2 seconds" is unverified (no live timing data yet — same reasoning gap as the
+insert→normal delay fix from round 2, where a partial fix turned out to be
+"slightly better, not perfect"). If it's still too slow, the next lever would
+be a larger batch size (cheap to try) or a fundamentally different approach —
+`window.openRem()` can focus a Rem directly without the incremental walk (used
+already as `focusRemById`'s cross-document fallback) but is documented
+elsewhere as NOT leaving a live text caret behind (a click is needed
+afterwards) — trading that away for gg/G specifically would be a real UX
+change, not just a speed fix, and shouldn't be done without checking with the
+user first.
+
+### 2026-07-10 — round 3: undo-grouping CONFIRMED working live, but revert/reapply forgot walkCaretOut — fixed
+
+Live signal at last: user confirmed the round-2 `structuralOp` rewrite
+actually reverses a full paste / mass-indent in one `u` press now (the
+counted-`editor.undo()`-N-times approach from round 1 truly didn't work; the
+direct revert/reapply approach does). Also confirmed the Ctrl-P/Ctrl-K Escape
+fix works once genuinely idle in normal mode — turned out the original report
+was from insert mode, exactly the known gap flagged in round 2 (insert mode's
+Escape stays unconditional to exit insert; can't disambiguate "close RemNote's
+popup" from "leave insert mode" using the same bare keystroke with no DOM
+visibility into whether a popup is open).
+
+New regression from round 2: undoing a paste/indent worked, but **the caret
+disappeared afterward**, forcing a mouse click to regain focus. Root cause:
+`pasteRem`/`indentSelection`/`outdentSelection`'s `structuralOp.revert`/
+`reapply` closures called `rem.remove()`/`setParent()` directly, skipping
+`walkCaretOut()` — which the ORIGINAL forward-direction code always calls
+first, with the exact comment "re-parenting the focused Rem unmounts its
+editor and kills the caret... once removed the caret is unrecoverable
+programmatically." My new closures moved/removed Rems the caret could easily
+still be sitting on (undo/redo can fire long after the original command) with
+no such guard. Fixed:
+- `pasteRem`'s `revert` now fetches the created Rems and passes them through
+  the EXISTING `removeRems()` helper (used by `dd`/visual-line delete)
+  instead of a bare `remove()` loop — it already walks the caret to a safe
+  neighbor first, and falls back to clearing one Rem's text if there's
+  nowhere to go (the "deleting the only bullet" case).
+- `indentSelection`/`outdentSelection`'s `revert`/`reapply` now call
+  `walkCaretOut(moveIds)` before the `setParent` loop and `walkCaretTo` after,
+  mirroring the forward operation exactly.
+
+**One acknowledged, unaddressed residual risk**: `walkCaretOut` always moves
+the caret at least one step vertically before checking whether it needed to
+(it calls `moveCaretVertical` unconditionally, then checks). In the ORIGINAL
+forward code this never mattered — the caret is always ALREADY on the
+targeted rems when the user just ran that command on their own selection. My
+revert/reapply can fire much later (nothing currently clears `structuralOp`
+on plain caret movement, only on another mutating action), so if the user has
+since moved the caret AWAY from the affected rems entirely, calling
+`walkCaretOut` unconditionally would still nudge the caret one line for no
+reason. Not fixed this round (lower severity than the disappearing-caret bug,
+and time-boxed) — if reported, the fix is to check
+`inRemovedSubtree(focusedId, ids)` first and only call `walkCaretOut` when
+true.
+
+Debug badge additions this round: `esc:steal`/`esc:free` (live, always
+current — shows whether `escape` is currently in `stolenSpecs`, so a report
+like "Escape didn't close the popup" can be immediately split into "we were
+still holding it" vs. "we released it and RemNote still didn't take it," two
+very different follow-ups). Also: the build-stamp
+(`__VIM_BUILD__`/`webpack.config.js` DefinePlugin, shown as the first badge
+token) only refreshes on a dev-server **process restart**, not on every
+incremental rebuild the watcher does automatically — this confused a status
+check this round (bundle was current, stamp was stale-looking). Habit going
+forward: restart `npm run dev` after each round of fixes specifically so the
+stamp stays a meaningful "is this fresh" signal, not just rely on the
+watcher's silent rebuild.
+
+### 2026-07-10 — HANDOFF: round 2 on `fix/vim-mode-bugs` after live feedback — undo-grouping rewritten, still no live access this session
+
+User live-tested the 2026-07-09 entry below against a real RemNote build (via
+`npm run dev`) and reported back per-item status. Still no GUI/RemNote access
+in this session — everything below is reasoned from the code plus the user's
+verbal report, not independently observed. A build-stamp was added this round
+too (`webpack.config.js` DefinePlugin → `__VIM_BUILD__`, shown as the first
+token in the debug badge, e.g. `vim 0.1.0@2026-07-09T23:41:07 normal ...`) —
+**always check that string changed after a plugin reload** before trusting a
+"still broken" report; `npm run dev`'s dev-server has no hot reload, and the
+stamp is only refreshed when the dev-server process itself (re)starts, not on
+every incremental save.
+
+1. **Undo after paste/mass-indent: reported "not done."** The previous
+   `undoGroups`/`redoGroups` counted-repeat approach (call `editor.undo()` N
+   times, N = Rems touched) evidently doesn't reverse these operations
+   correctly live — most likely because RemNote's real undo-history
+   granularity per Rem isn't 1:1 with what was counted (createRem/setText/
+   setParent may be more than one native entry each), which isn't observable
+   from the plugin API. **Replaced entirely** with a direct
+   revert/reapply mechanism (`structuralOp` in `VimAdapter`) that bypasses
+   `editor.undo()`/`redo()` for these two ops and reverses them with the same
+   primitives that performed them — correct by construction, no native
+   undo-history granularity to guess:
+   - `pasteRem`'s case in `exec()` now records every top-level created Rem id;
+     `revert` just `remove()`s them, `reapply` re-runs `pasteSubtree` at the
+     original site. This half is simple and should be solid.
+   - `indentSelection`/`outdentSelection`'s case now records each moved rem's
+     original AND destination `(parentId, position)` (one extra
+     `getChildrenRem()` per rem versus the existing race-avoiding lookup, paid
+     only to build this record). `revert` restores original positions in
+     REVERSE of application order (undo the last move first — the general
+     rule for a sequence of order-dependent position changes); `reapply`
+     replays forward. **This is the riskiest part of this whole session** —
+     the position arithmetic for restoring MULTIPLE moved rems that
+     originally shared a parent is reasoned through, not tested (a single
+     selected rem, the most common case, has no such ordering complexity —
+     risk is concentrated in multi-rem, multi-parent visual-line indents).
+   - Any OTHER mutating action (new `MUTATING_OTHER` set in `applyKey`)
+     clears `structuralOp`, so a `u` after some unrelated later edit correctly
+     falls through to plain `editor.undo()` instead of reaching back through
+     a stale record.
+   - Debug badge now shows `dbgUndo`: `u:structural`/`u:native`/
+     `r:structural`/`r:native` — **check this first** next time: if it says
+     `u:native` right after a multi-bullet paste, the tracking isn't firing
+     (a real bug to chase); if it says `u:structural` but the bullets are
+     still there afterward, the `revert`/`reapply` logic itself has a bug.
+
+2. **Insert→Normal delay: reported "maybe slightly better, but still not
+   perfect."** The prior fix only removed the second, redundant confirmatory
+   read; the FIRST `settleRead` in `reconcileAfterInsert` still ran
+   unconditionally (≥1 network/IPC round trip even when nothing was typed).
+   Now skipped entirely when no `EditorTextEdited` fired during insert (the
+   `i<Esc>` idiom) — `fresh = pre` directly, no read at all. This is a firmer
+   bet than before (previously we still read-to-confirm; now we trust the
+   event outright when it never fired) — if `EditorTextEdited` turns out to
+   be unreliable (event drop/debounce), the exposure is a stale model for
+   ONE keystroke, self-correcting on the next real edit. The fallback path
+   (when an edit WAS seen) is untouched. **If it's still not fast enough**,
+   the remaining cost is very likely `applyMode()`'s `stealKeys`/
+   `releaseKeys` RPC round-trip when swapping ~45 normal-mode key specs back
+   in (architecturally required for per-mode key stealing, not something
+   this session found a safe way to avoid) — added `dbgTiming` to the badge
+   (`t:recon=Xms mode=Yms`) specifically to tell these apart next report:
+   if `mode=` dominates, the remaining latency is the stealKeys round trip,
+   which would need a different, more invasive approach (not attempted this
+   round — flag it back here if that's what the numbers show).
+
+3. **NEW: a RemNote popup (Ctrl-P/Ctrl-K) can't be closed with Escape** — the
+   plugin's own Escape steal (always active, every mode) swallows it before
+   RemNote's own popup-close handler sees it. Added `syncEscapeSteal()`: in
+   NORMAL mode specifically, when there's genuinely nothing pending
+   (`op`/`pending`/`count` all empty — Escape would be a vim no-op anyway),
+   `escape` is released so RemNote's own handler gets it; the instant
+   anything becomes pending, or on any other mode, it's re-stolen. Kept in
+   sync with `applyMode`'s own `stolenSpecs` bookkeeping (`escapeWanted`) so
+   the two mechanisms don't fight over whether `escape` is actually
+   registered. **Known gaps, not fixed by this**: (a) doesn't help if the
+   popup was invoked from INSERT mode (Escape there is unconditional, by
+   necessity, to exit insert); (b) assumes RemNote's key-steal takes
+   priority over popup-local Escape handling only while explicitly
+   registered — if RemNote's steal mechanism intercepts at a level that
+   ignores our release entirely, this won't help at all and needs a
+   different investigation. Purely reasoned, zero live signal either way yet.
+
+### 2026-07-09 — HANDOFF: five user-reported bugs fixed on branch `fix/vim-mode-bugs` — NEEDS LIVE VERIFICATION
+
+Working from a fresh CLAUDE.md pass over the codebase (no live RemNote access
+in that session — terminal-only environment), so **every item below is
+implemented from reading the code and is unverified against a real running
+RemNote instance.** `npm run check-types`, `npm test` (365/365) and `npm run
+build` are all green, but per `pure.ts`'s own doc comment "adapter.ts itself
+can only be exercised live" — none of this touched the engine, so the unit
+suite couldn't catch a live-only regression either way. **Next step for
+whoever picks this up: run through the 5 repro scenarios below against a real
+RemNote build before merging**, watching the debug badge (bottom-left) for
+the new `dbgLeak` field this session added.
+
+User's 5 reports and what changed:
+
+1. **`r` + a capital letter "just types it and ignores it."** Root cause is
+   almost certainly the same shift-blindness §9 already documents for other
+   keys (RemNote's steal matcher not reliably catching a held Shift) — **not
+   fixed at the root, and may not be fixable** (no way to detect Shift from
+   the plugin API at all). What IS fixed: the fallout. If the capital leaks
+   through as literal native text while `state.pending.p === 'replace'` is
+   armed, the pending replace previously stayed silently stuck against a now-
+   stale caret position. See item 2's fix — the same guard also clears
+   `pending`/`op`/`count` when this happens, so a leaked keystroke aborts the
+   in-flight command cleanly instead of misfiring on the next keystroke.
+
+2. **Empty bullet + typed capitals ⇒ h/l stop working in that bullet.**
+   `VimAdapter.start()` (`src/adapter/adapter.ts`) now also listens for
+   `AppEvents.EditorTextEdited` (previously unused — confirmed present in
+   `@remnote/plugin-sdk`'s `events.d.ts`). When it fires while `!this.processing`
+   and mode isn't `insert`/`command`, that can only be a native edit that
+   slipped past our key-stealing (we never mutate the doc ourselves outside
+   `exec()`), so the local model is now provably stale — the handler drops any
+   in-flight `pending`/`op`/count and marks the model dirty so the next
+   keystroke resyncs from RemNote instead of computing motions against a
+   bullet the engine still believes is empty. Sets `dbgLeak` in the badge when
+   it fires, for live confirmation.
+
+3. **Delay between leaving insert mode and the next `j`/`k`.** Root cause
+   found in `reconcileAfterInsert()`: it unconditionally paid a second,
+   longer `settleRead` (rounds:1, delayMs:120) whenever the pre/post-insert
+   text matched, to disambiguate "nothing was typed" from "the read API is
+   still lagging behind a real edit" — and this fully blocks the adapter's key
+   queue, so the very next keystroke (often `j`/`k` per the report) waits on
+   it. The same new `EditorTextEdited` listener now sets `insertSawEdit` while
+   in insert mode; if it never fired, `fresh === pre` is a certainty rather
+   than a guess, and the extra confirmatory read is skipped. Behavior is
+   byte-for-byte unchanged whenever an edit WAS seen (the risky path is
+   untouched) — this only removes latency for the idiom where insert mode
+   produced no edit (`i<Esc>`, arrow-then-Escape).
+
+4. **`;e` wildmenu suggestions overflow the screen for long Rem names.** The
+   wildmenu renders through CSS `body::after { content: "..." }` with
+   `white-space: pre` (needed for the `\A`-separated multi-line stack), which
+   has no usable `text-overflow` story — so truncation has to happen at the
+   string level. Added `truncateLabel()` to `src/adapter/pure.ts` (code-point
+   safe, default 60 chars + `…`), used only for the on-screen label in
+   `updateSuggestions()` — Tab-completion still inserts the Rem's real,
+   untruncated name. Also added a `max-width: 70vw; overflow: hidden` safety
+   net to the badge CSS itself. Unit-tested in `tests/adapter-pure.test.ts`
+   (this one's fully verified, unlike 1–3 and 5).
+
+5. **Undo after paste-subtree / mass indent needs many presses.** RemNote's
+   undo history apparently records one entry per Rem a structural op touches
+   (`createRem`/`setParent`), not one per vim command — confirmed by the
+   user's own repro ("remove each separate cell"). Added `undoGroups`/
+   `redoGroups` stacks (`VimAdapter`): every keystroke that reaches
+   `applyKey()` pushes its native-undo weight (default 1); `pasteRem`'s case
+   in `exec()` now sums `pasteSubtree`'s (also changed to return a `{id,
+   count}` node count instead of just an id — the other call site,
+   `duplicateBullets`, was updated for the new shape but NOT wired into the
+   grouping, out of scope for this pass) and `indentSelection`/
+   `outdentSelection` counts actual `setParent` calls (some rems `continue`
+   past guards and don't get one) — both override the default via
+   `pendingGroupSize`, consumed once at the end of the same `applyKey()`
+   call. `case 'undo'`/`'redo'` in `exec()` now pop a weight off one stack,
+   loop `editor.undo()`/`redo()` that many times, and push it onto the other.
+   `replayKeys` (dot-repeat) is excluded from pushing its own entry since it
+   recurses into `applyKey()` per replayed key, which pushes its own — so
+   `.`-repeating a grouped paste stays correctly grouped. **This is the
+   riskiest change to get wrong** (an incorrect count would over/under-undo
+   relative to what the user expects) — the design deliberately defaults
+   every untouched action to weight 1 (today's exact existing behavior, zero
+   regression risk) and only overrides the count for the two named ops where
+   the user's own bug report empirically confirms the 1-native-step-per-Rem
+   granularity. Still: verify live, specifically that `u` after a multi-
+   bullet `p` and after a multi-line `>`/`<` in visual-line each fully
+   reverse in one press, and that a subsequent `u` (for an unrelated earlier
+   edit) isn't affected.
+
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
 **USER DECISION (2026-07-08, final):** the plugin is being published, so the

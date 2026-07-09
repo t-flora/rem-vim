@@ -10,7 +10,25 @@ import { stopsBetween } from '../engine/motions';
 import { Action, Mode, Snapshot, VimState } from '../engine/types';
 import { hostDocument, readDomCaret, setDomCaret } from './domCaret';
 import { bindingsForMode, SPEC_TO_SYM } from './keymap';
-import { diffCaret, flattenRich, sanitizeInsert, settleRead } from './pure';
+import {
+  classifyStrayEdit,
+  computeJumpStep,
+  decideRedo,
+  decideUndo,
+  flattenRich,
+  isDescendantAmong,
+  isEscapeWanted,
+  JumpEntry,
+  reconcileInsertText,
+  resolveInsertCaret,
+  retryUntilTrue,
+  sanitizeInsert,
+  settleRead,
+  truncateLabel,
+  walkToBoundary,
+  walkToRoot,
+  walkToTarget,
+} from './pure';
 
 export { diffCaret } from './pure';
 
@@ -65,11 +83,49 @@ const MODE_LABELS: Record<Mode, string> = {
 };
 
 export class VimAdapter {
+  /** package version + webpack-process build time — see src/global.d.ts and
+   * webpack.config.js's DefinePlugin. Shown in the debug badge so a stale
+   * "no hot reload" plugin load is immediately visible instead of silently
+   * running old code. */
+  private static readonly BUILD =
+    typeof __VIM_BUILD__ !== 'undefined' ? __VIM_BUILD__ : 'dev';
   private state: VimState = initialState();
   private queue: Promise<unknown> = Promise.resolve();
   private stolenSpecs = new Set<string>();
   /** Line register: cut/yanked bullets INCLUDING their subtrees. */
   private lineRegister: RegisterNode[] = [];
+  /**
+   * The most recent compound structural op (`pasteRem` / `indentSelection` /
+   * `outdentSelection`), reversible/reapplyable directly with the same
+   * primitives that performed it — NOT by calling RemNote's own
+   * `editor.undo()`/`redo()`. RemNote's undo history records one entry per
+   * Rem such an op touches (createRem/setParent), not one per vim command,
+   * and there's no way to observe that count from the plugin API — an
+   * earlier version of this tried counting native undo-history entries and
+   * replaying `editor.undo()` that many times, but it doesn't reliably
+   * reverse the whole op in live testing (the exact native granularity isn't
+   * 1:1 with what we counted). Reversing it ourselves is correct by
+   * construction: no guessing. `structuralApplied` tracks which direction it
+   * currently is; any OTHER mutating action clears it entirely (a genuinely
+   * new change should make `u` target THAT change, not reach back through
+   * this one) — see the `MUTATING_OTHER` check in `applyKey`.
+   */
+  private structuralOp: { revert: () => Promise<void>; reapply: () => Promise<void> } | null = null;
+  private structuralApplied = true;
+  /** Debug trace: which path the last u/C-r actually took, so live testing
+   * can confirm the direct-revert path is the one firing. */
+  private dbgUndo = '';
+  /**
+   * Whether `escape` is currently in `stolenSpecs`. Normally always true
+   * (every mode needs Escape stolen), except IDLE normal mode (no pending
+   * op/count) — RemNote's steal apparently intercepts Escape ahead of its
+   * own UI regardless of whether a popup is open, so leaving it stolen while
+   * idle swallows the Escape a user presses to close RemNote's own Ctrl-P/
+   * Ctrl-K palette. `applyMode` also writes this (it does its own full
+   * stolenSpecs diff on every mode transition) — keep both in sync or they
+   * fight over whether `escape` is actually registered.
+   */
+  private escapeWanted = true;
   private enabled = false;
   /** True while we are applying our own edits (so we ignore our own events). */
   private processing = false;
@@ -84,6 +140,22 @@ export class VimAdapter {
   private dbgLast = '-';
   /** Line text at the moment insert mode was entered (for caret diffing). */
   private insertEntryText: string | null = null;
+  /**
+   * Set by an `EditorTextEdited` event while insert mode is active — lets
+   * `reconcileAfterInsert` skip its extra confirmatory read when we have
+   * independent proof nothing was typed (the common `i<Esc>` idiom), instead
+   * of paying a fixed worst-case delay to disambiguate "nothing changed" from
+   * "the read is still lagging" on every single Escape.
+   */
+  private insertSawEdit = false;
+  /**
+   * Debug trace: last time the leak-resync guard (below) fired, so live
+   * testing can confirm it actually engaged.
+   */
+  private dbgLeak = '';
+  /** Debug: ms spent in reconcileAfterInsert vs. applyMode on the last
+   * mode-switch action — see the 'mode' case in exec(). */
+  private dbgTiming = '';
   /** Visual-line selection: the trail of Rem ids the head has walked. */
   private vTrail: string[] | null = null;
   /** Rem ids currently highlighted (normalized trail) — rendered via CSS. */
@@ -99,13 +171,13 @@ export class VimAdapter {
    * position. `jumpPos === jumps.length` means "at the live end" (not
    * currently browsing the list) — vim's model.
    */
-  private jumps: string[] = [];
+  private jumps: JumpEntry[] = [];
   private jumpPos = 0;
   /**
-   * Marks (`m<c>` / `'<c>`): mark name → rem id. The pseudo-mark `'` is
+   * Marks (`m<c>` / `'<c>`): mark name → jump entry. The pseudo-mark `'` is
    * auto-set by every recordJump, so `''` returns to the pre-jump rem.
    */
-  private marks = new Map<string, string>();
+  private marks = new Map<string, JumpEntry>();
   /** Wildmenu: current command-line suggestions (label shown, complete = full command line it expands to). */
   private suggestions: { label: string; complete: string }[] = [];
   /** Index of the suggestion last applied by Tab (-1 = none applied). */
@@ -156,6 +228,37 @@ export class VimAdapter {
       if (!this.processing) this.invalidateModel();
     });
 
+    // A text edit RemNote tells us about while WE are not the one editing
+    // (`!this.processing`) can only be native typing that slipped past our
+    // key-stealing — normal mode steals every letter/digit/punct spec, but
+    // RemNote's steal matcher is shift-blind (keymap.ts) and empirically does
+    // not always catch a held Shift, so a capital letter can occasionally
+    // reach the document as literal text while the engine still believes
+    // nothing changed. Two distinct uses of the same signal:
+    //  - insert mode: just remember an edit happened (reconcileAfterInsert
+    //    below uses this to skip its own confirmatory read when nothing was
+    //    typed, instead of blindly re-reading every time).
+    //  - any other mode: the local model and any in-flight pending command
+    //    (e.g. `r` waiting for its replacement char) are now stale — drop the
+    //    pending state and mark the model dirty so the next keystroke
+    //    resyncs instead of computing against a bullet the engine still
+    //    thinks is empty (the reported "can't move left/right after typing
+    //    capitals into an empty bullet" symptom).
+    this.plugin.event.addListener(AppEvents.EditorTextEdited, undefined, () => {
+      switch (classifyStrayEdit(this.state.mode, this.processing)) {
+        case 'ignore':
+          return;
+        case 'markInsertEdit':
+          this.insertSawEdit = true;
+          return;
+        case 'resetPending':
+          this.dbgLeak = `resync@${this.dbgCount}`;
+          this.state = { ...this.state, pending: { p: 'none' }, op: null, opCount: '', count: '' };
+          this.invalidateModel(true);
+          return;
+      }
+    });
+
     await this.applyMode(this.state.mode);
   }
 
@@ -169,6 +272,10 @@ export class VimAdapter {
     } else {
       this.enabled = true;
       this.state = { ...initialState(), mode: 'normal' };
+      // Whatever happened while vim mode was off isn't reflected in this —
+      // a stale record would misapply to an unrelated future `u`/`C-r`.
+      this.structuralOp = null;
+      this.escapeWanted = true;
       await this.applyMode('normal');
       await this.plugin.app.toast('Vim mode on');
     }
@@ -231,8 +338,29 @@ export class VimAdapter {
       // commands still compose correctly.
       await this.exec(a, snap);
       this.updateModel(a);
+      // A genuinely new mutation supersedes any pending structuralOp record
+      // — `u` right after this should target THIS change, not reach back
+      // through an earlier paste/indent. pasteRem/indentSelection/
+      // outdentSelection themselves aren't in this set: they set a fresh
+      // structuralOp in their own exec() case, in the same iteration.
+      if (VimAdapter.MUTATING_OTHER.has(a.t)) this.structuralOp = null;
     }
+    await this.syncEscapeSteal();
   }
+
+  /** See `structuralOp` — action kinds that are plain (non-compound) native
+   * mutations and should invalidate any pending structural-undo record. */
+  private static readonly MUTATING_OTHER = new Set<Action['t']>([
+    'deleteRange',
+    'insertText',
+    'deleteRem',
+    'deleteRemSelection',
+    'indent',
+    'outdent',
+    'joinRem',
+    'newBullet',
+    'runEx',
+  ]);
 
   /**
    * The line the engine reasons about.
@@ -514,12 +642,34 @@ export class VimAdapter {
         }
         break;
 
-      case 'undo':
-        await editor.undo();
+      case 'undo': {
+        // See `structuralOp`: a tracked multi-Rem paste/indent reverses
+        // itself directly instead of guessing how many native undo-history
+        // entries it produced. Anything else is RemNote's own single-step
+        // undo, unchanged from before this ever existed.
+        const useStructural = decideUndo(this.structuralOp != null, this.structuralApplied) === 'structuralRevert';
+        if (useStructural && this.structuralOp) {
+          await this.structuralOp.revert();
+          this.structuralApplied = false;
+          this.dbgUndo = 'u:structural';
+        } else {
+          await editor.undo();
+          this.dbgUndo = 'u:native';
+        }
         break;
-      case 'redo':
-        await editor.redo();
+      }
+      case 'redo': {
+        const useStructural = decideRedo(this.structuralOp != null, this.structuralApplied) === 'structuralReapply';
+        if (useStructural && this.structuralOp) {
+          await this.structuralOp.reapply();
+          this.structuralApplied = true;
+          this.dbgUndo = 'r:structural';
+        } else {
+          await editor.redo();
+          this.dbgUndo = 'r:native';
+        }
         break;
+      }
 
       case 'deleteRem': {
         const rems = await this.focusedPlusFollowing(a.count);
@@ -566,17 +716,57 @@ export class VimAdapter {
         } else {
           break;
         }
+        const atStart = at;
+        const pasteParent = parent;
+        const register = this.lineRegister;
+        const pasteCount = a.count;
         let firstPastedId: string | null = null;
+        let createdTopIds: string[] = [];
         for (let i = 0; i < a.count; i++) {
           for (const node of this.lineRegister) {
-            const id = await this.pasteSubtree(node, parent, at);
-            if (!id) break;
-            if (!firstPastedId) firstPastedId = id;
+            const res = await this.pasteSubtree(node, parent, at);
+            if (!res) break;
+            if (!firstPastedId) firstPastedId = res.id;
+            createdTopIds.push(res.id);
             at++;
           }
         }
         // vim puts the cursor on the pasted line
         if (firstPastedId) await this.walkCaretTo(firstPastedId, 1);
+        if (createdTopIds.length > 0) {
+          // Reversible directly — no need to know how many native
+          // undo-history entries the paste produced (see `structuralOp`).
+          this.structuralOp = {
+            revert: async () => {
+              // removeRems (not a bare r.remove() loop) — re-parenting/
+              // removing a Rem the caret is sitting in "unmounts its editor
+              // and kills the caret" (walkCaretOut's doc comment); removeRems
+              // already walks the caret to a safe neighbor first and falls
+              // back to clearing one Rem's text if there's nowhere to go.
+              const fetched = await Promise.all(createdTopIds.map((id) => rem.findOne(id)));
+              const found = fetched.filter((r): r is NonNullable<typeof r> => r != null);
+              if (found.length > 0) await this.removeRems(found);
+            },
+            reapply: async () => {
+              let pos = atStart;
+              const freshIds: string[] = [];
+              let firstId: string | null = null;
+              for (let i = 0; i < pasteCount; i++) {
+                for (const node of register) {
+                  const res = await this.pasteSubtree(node, pasteParent, pos);
+                  if (!res) break;
+                  if (!firstId) firstId = res.id;
+                  freshIds.push(res.id);
+                  pos++;
+                }
+              }
+              createdTopIds = freshIds;
+              if (firstId) await this.walkCaretTo(firstId, 1);
+              this.invalidateModel();
+            },
+          };
+          this.structuralApplied = true;
+        }
         break;
       }
 
@@ -721,6 +911,20 @@ export class VimAdapter {
         // Re-parenting the focused Rem unmounts its editor and kills the
         // caret; park the caret on a stable neighbor first.
         await this.walkCaretOut(new Set(rems.map((r) => r._id)));
+        // Record each rem's ORIGINAL (parent, position) before moving it, so
+        // `u` can restore the exact prior arrangement directly instead of
+        // guessing how many native undo-history entries the moves produced
+        // (see `structuralOp`) — an extra getChildrenRem() per rem versus the
+        // already-optimized forward path below, spent only on building this
+        // record; the moved-to (parent, position) is recorded too, so redo
+        // doesn't have to re-derive destinations either.
+        const moves: {
+          id: string;
+          fromParentId: string | null;
+          fromPos: number;
+          toParentId: string | null;
+          toPos: number;
+        }[] = [];
         if (a.t === 'indentSelection') {
           // vim >: a run of units sharing a parent all tuck under the sibling
           // just above the run's FIRST unit, keeping order. The destination is
@@ -748,7 +952,10 @@ export class VimAdapter {
               dest = prev;
               at = (prev.children ?? []).length;
             }
+            const beforeSiblings = parent ? await parent.getChildrenRem() : [];
+            const fromPos = parent ? beforeSiblings.findIndex((s) => s._id === r._id) : 0;
             await r.setParent(dest, at);
+            moves.push({ id: r._id, fromParentId: pid, fromPos, toParentId: dest._id, toPos: at });
             at += 1;
           }
         } else {
@@ -763,13 +970,55 @@ export class VimAdapter {
             const grand = await parent.getParentRem();
             if (!grand) continue;
             const parentPos = await this.positionById(parent);
+            const beforeSiblings = await parent.getChildrenRem();
+            const fromPos = beforeSiblings.findIndex((s) => s._id === r._id);
             await r.setParent(grand, parentPos + 1);
+            moves.push({
+              id: r._id,
+              fromParentId: parent._id,
+              fromPos,
+              toParentId: grand._id,
+              toPos: parentPos + 1,
+            });
           }
         }
         this.clearVTrail();
         // vim leaves the cursor on the (first) operated line
         await this.walkCaretTo(rems[0]._id, -1);
         this.invalidateModel();
+        if (moves.length > 0) {
+          const moveIds = new Set(moves.map((mv) => mv.id));
+          this.structuralOp = {
+            revert: async () => {
+              // setParent (like remove) "unmounts its editor and kills the
+              // caret" if it's currently focused there — walk it out first,
+              // same as the forward operation above, or `u` leaves the
+              // cursor unrecoverable without a mouse click.
+              await this.walkCaretOut(moveIds);
+              // Reverse of application order — undo the LAST move first, the
+              // general-purpose safe rule for a sequence of order-dependent
+              // position changes.
+              for (const mv of [...moves].reverse()) {
+                const r = await rem.findOne(mv.id);
+                const p = mv.fromParentId ? await rem.findOne(mv.fromParentId) : null;
+                if (r) await r.setParent((p as never) ?? null, mv.fromPos);
+              }
+              this.invalidateModel();
+              await this.walkCaretTo(moves[0].id, -1);
+            },
+            reapply: async () => {
+              await this.walkCaretOut(moveIds);
+              for (const mv of moves) {
+                const r = await rem.findOne(mv.id);
+                const p = mv.toParentId ? await rem.findOne(mv.toParentId) : null;
+                if (r) await r.setParent((p as never) ?? null, mv.toPos);
+              }
+              this.invalidateModel();
+              await this.walkCaretTo(moves[0].id, -1);
+            },
+          };
+          this.structuralApplied = true;
+        }
         break;
       }
 
@@ -780,58 +1029,55 @@ export class VimAdapter {
 
       case 'goDoc': {
         await this.recordJump(); // gg/G are jumps — Ctrl-O returns here
-        const dir = a.where === 'start' ? -1 : 1;
-        let prevId: string | undefined;
-        for (let i = 0; i < 200; i++) {
-          await editor.moveCaretVertical(dir as -1 | 1);
-          const f = await focus.getFocusedRem();
-          if (!f || f._id === prevId) break;
-          prevId = f._id;
-        }
+        const dir = (a.where === 'start' ? -1 : 1) as -1 | 1;
+        // moveCaretVertical past the document boundary is a safe no-op — the
+        // 'scroll' case above already relies on this unchecked. So batch
+        // several hops between focus checks instead of checking after every
+        // single one: the previous 1-hop-then-check loop paid TWO async
+        // round trips per bullet (moveCaretVertical + getFocusedRem), which
+        // is what made this "go bullet by bullet, up to 2s in long
+        // documents" — most of that cost was the getFocusedRem() checks, not
+        // the moves themselves. Batching cuts the check count ~20-fold at the
+        // cost of at most 19 wasted moves once the boundary is hit. Ceiling
+        // raised from 200 to 2000 hops too: a document with more visible rows
+        // than the old cap would have silently stopped short of the true
+        // start/end.
+        await walkToBoundary(
+          () => editor.moveCaretVertical(dir),
+          async () => (await focus.getFocusedRem())?._id
+        );
         break;
       }
 
       case 'jump': {
         const cur = (await focus.getFocusedRem())?._id;
-        if (a.dir === -1) {
-          if (this.jumpPos === this.jumps.length) {
-            // First hop back from the live position: stash it so Ctrl-I can
-            // return, then step onto the previous entry.
-            if (cur && this.jumps[this.jumps.length - 1] !== cur) {
-              this.jumps.push(cur);
-            }
-            this.jumpPos = this.jumps.length - 1;
-            if (this.jumpPos > 0 && this.jumps[this.jumpPos] === cur) this.jumpPos--;
-          } else if (this.jumpPos > 0) {
-            this.jumpPos--;
-          } else {
-            break;
-          }
-        } else {
-          if (this.jumpPos >= this.jumps.length - 1) break;
-          this.jumpPos++;
-        }
-        const targetId = this.jumps[this.jumpPos];
-        if (targetId && targetId !== cur) await this.focusRemById(targetId);
+        // Only resolve docId (an SDK call) when computeJumpStep will actually
+        // use it — the "stash the live position" branch, first Ctrl-O off it.
+        const needsDocId = a.dir === -1 && this.jumpPos === this.jumps.length;
+        const docId = needsDocId ? await this.currentDocId() : undefined;
+        const step = computeJumpStep(this.jumps, this.jumpPos, a.dir, cur, docId);
+        this.jumps = step.jumps;
+        this.jumpPos = step.jumpPos;
+        if (step.target) await this.focusRemById(step.target.id, step.target.docId);
         break;
       }
 
       case 'setMark': {
         const f = await focus.getFocusedRem();
-        if (f) this.marks.set(a.name, f._id);
+        if (f) this.marks.set(a.name, { id: f._id, docId: await this.currentDocId() });
         break;
       }
 
       case 'gotoMark': {
-        const id = this.marks.get(a.name);
-        const target = id ? await rem.findOne(id) : null;
+        const mark = this.marks.get(a.name);
+        const target = mark ? await rem.findOne(mark.id) : null;
         if (!target) {
-          await this.plugin.app.toast(id ? `Mark points to a deleted rem: ${a.name}` : `Mark not set: ${a.name}`);
-          if (id) this.marks.delete(a.name);
+          await this.plugin.app.toast(mark ? `Mark points to a deleted rem: ${a.name}` : `Mark not set: ${a.name}`);
+          if (mark) this.marks.delete(a.name);
           break;
         }
         await this.recordJump(); // a mark jump is a jumplist entry (and sets ')
-        await this.focusRemById(target._id);
+        await this.focusRemById(target._id, mark?.docId);
         break;
       }
 
@@ -871,18 +1117,28 @@ export class VimAdapter {
         }
         break;
 
-      case 'mode':
+      case 'mode': {
+        // Timing breakdown for the insert→normal path specifically — shown
+        // in the debug badge as `t:recon=..ms mode=..ms` so a further latency
+        // report can point at which half is actually slow instead of
+        // guessing blind.
+        const t0 = Date.now();
         if (a.mode === 'insert') {
           // Put the *real* caret where the model says before native typing
           // begins, then remember the line so we can recover the caret on exit.
           const m = this.model;
           if (m) await this.setCaretAbs(m.caret, m.text.length);
           this.insertEntryText = m?.text ?? snap.text;
+          this.insertSawEdit = false;
         } else if (this.insertEntryText != null) {
           await this.reconcileAfterInsert();
         }
+        const t1 = Date.now();
         await this.applyMode(a.mode);
+        const t2 = Date.now();
+        this.dbgTiming = `t:recon=${t1 - t0}ms mode=${t2 - t1}ms`;
         break;
+      }
     }
   }
 
@@ -932,13 +1188,14 @@ export class VimAdapter {
   private async reconcileAfterInsert() {
     const pre = this.insertEntryText ?? '';
     this.insertEntryText = null;
-    let fresh = await settleRead(() => this.readLine(), (a, b) => a === b);
-    if (fresh === pre) {
-      fresh = await settleRead(() => this.readLine(), (a, b) => a === b, {
-        rounds: 1,
-        delayMs: 120,
-      });
-    }
+    // If no EditorTextEdited event fired while insert mode was active, we
+    // have independent proof nothing was typed — skip reading the editor at
+    // all (no network/IPC round trip to confirm something already certain).
+    // This is a real bet on EditorTextEdited firing reliably for every native
+    // edit; if that ever turns out to be wrong, the fallback (used whenever
+    // an edit WAS seen) is completely unchanged from before this shortcut
+    // existed, so the exposure is bounded to this one branch.
+    const fresh = await reconcileInsertText(pre, this.insertSawEdit, () => this.readLine());
     if (fresh == null) {
       // No focused editor (focus lost mid-insert) — never install an empty
       // model over a line that still has text; re-read on the next key.
@@ -947,7 +1204,7 @@ export class VimAdapter {
     }
     const doc = hostDocument();
     const domCaret = doc ? readDomCaret(doc) : null;
-    const caret = clamp(domCaret ?? diffCaret(pre, fresh, this.model?.caret ?? 0), 0, fresh.length);
+    const caret = resolveInsertCaret(domCaret, pre, fresh, this.model?.caret ?? 0);
     const remId = this.model?.remId;
     this.model = { remId, text: fresh, caret };
     this.lastCaret = caret;
@@ -1204,8 +1461,8 @@ export class VimAdapter {
     let firstId: string | null = null;
     for (const r of targets) {
       const node = await this.captureSubtree(r);
-      const id = await this.pasteSubtree(node, parent, at++);
-      if (!firstId && id) firstId = id;
+      const res = await this.pasteSubtree(node, parent, at++);
+      if (!firstId && res) firstId = res.id;
     }
     if (firstId) await this.walkCaretTo(firstId, 1);
     this.invalidateModel();
@@ -1328,8 +1585,8 @@ export class VimAdapter {
       return;
     }
     const parts: string[] = [];
-    for (const [name, id] of this.marks) {
-      const r = await this.plugin.rem.findOne(id);
+    for (const [name, mark] of this.marks) {
+      const r = await this.plugin.rem.findOne(mark.id);
       const txt = r
         ? ((await this.plugin.richText.toString((r.text ?? []) as RichTextInterface)) ?? '')
         : '(deleted)';
@@ -1422,7 +1679,10 @@ export class VimAdapter {
           const name = (r.text ?? [])
             .map((x) => (typeof x === 'string' ? x : ((x as { text?: string }).text ?? '')))
             .join('');
-          return { label: name, complete: `${argMatch[1]} ${name}` };
+          // The full (untruncated) name still completes the command line —
+          // only the on-screen label is clipped, so Tab-completing a long
+          // Rem name isn't affected.
+          return { label: truncateLabel(name), complete: `${argMatch[1]} ${name}` };
         })
         .filter((s) => s.label !== '' && !seen.has(s.complete) && (seen.add(s.complete), true))
         .slice(0, 5);
@@ -1669,22 +1929,90 @@ export class VimAdapter {
   private async recordJump() {
     const f = await this.plugin.focus.getFocusedRem();
     if (!f) return;
+    const docId = await this.currentDocId();
     // A new jump truncates the forward part of the list, like vim.
     this.jumps = this.jumps.slice(0, this.jumpPos);
-    if (this.jumps[this.jumps.length - 1] !== f._id) this.jumps.push(f._id);
+    if (this.jumps[this.jumps.length - 1]?.id !== f._id) this.jumps.push({ id: f._id, docId });
     this.jumpPos = this.jumps.length;
-    this.marks.set("'", f._id); // vim's automatic ' mark — '' jumps back
+    this.marks.set("'", { id: f._id, docId }); // vim's automatic ' mark — '' jumps back
+  }
+
+  /** The Rem id currently open as the focused pane's document (its zoom root). */
+  private async currentDocId(): Promise<string | undefined> {
+    return this.plugin.window.getOpenPaneRemId(await this.plugin.window.getFocusedPaneId());
   }
 
   /**
    * Put the caret into `id`: walk visible rows if it is on screen in the
-   * current document (keeps the caret alive), otherwise open the rem — the
-   * cross-document case, where a click is needed afterwards anyway.
+   * current document (keeps the caret alive), otherwise open the document
+   * that was showing when this jump/mark was recorded (`docIdHint`) and walk
+   * down to `id` from there — the cross-document case, where the pane has to
+   * navigate first anyway.
+   *
+   * `walkCaretTo` alone can't tell these two cases apart except by trying:
+   * every hop needs an exact-match check (batching the way `goDoc` does would
+   * silently walk right past the target), so a jump to a Rem in a *different*
+   * document — the common case for Ctrl-O after using RemNote's own search to
+   * open elsewhere, or a mark set before switching documents — paid its full
+   * 60-hops-per-direction budget (up to ~240 round trips) before ever falling
+   * back, dragging the live caret through the whole current document on the
+   * way. Checking document membership first (bounded, O(1) round trips
+   * regardless of doc size) turns that into a handful of calls instead.
+   *
+   * The fallback needs the *recorded* document, not a guess: `openRem(id)`
+   * zooms into `id` as if it were its own page (reported live — landed on a
+   * bullet's zoomed-in parent instead of the real document). Re-deriving a
+   * "document root" from `id` by walking `.parent` up doesn't work either —
+   * there's no principled stopping point short of the true tree root, which
+   * overshoots past any document nested under a folder-like parent (also
+   * reported live — landed on the workspace folder, not the document). Only
+   * `docIdHint`, captured from `getOpenPaneRemId()` at record time, actually
+   * knows which Rem was the open document — `findDocRoot` stays only as a
+   * fallback for entries recorded before this existed / a missing hint.
+   *
+   * The walk-down after `openRem` is retried, not attempted once: right after
+   * a pane navigates to a brand-new document, `getFocusedRem()` reports the
+   * document's own root immediately, but `moveCaretVertical` silently no-ops
+   * for the first several calls (the editor hasn't finished mounting) —
+   * `walkCaretTo` sees the caret "not moving" and concludes it's hit a
+   * boundary after just its first couple of hops in each direction, leaving
+   * the caret stranded on the title (reported live: doc opens at the right
+   * scroll position, but the caret itself never left the title). A few
+   * retries a beat apart give the editor time to actually become navigable.
    */
-  private async focusRemById(id: string) {
-    if (await this.walkCaretTo(id, -1)) return;
+  private async focusRemById(id: string, docIdHint?: string) {
+    if ((await this.isInFocusedDocument(id)) && (await this.walkCaretTo(id, -1))) return;
     const r = await this.plugin.rem.findOne(id);
-    if (r) await this.plugin.window.openRem(r);
+    if (!r) return;
+    const root = (docIdHint && (await this.plugin.rem.findOne(docIdHint))) || (await this.findDocRoot(r));
+    await this.plugin.window.openRem(root);
+    if (root._id === id) return;
+    await retryUntilTrue(() => this.walkCaretTo(id, 1));
+  }
+
+  /** Walk `.parent` up to the top-level Rem (no parent) that `r` lives under. */
+  private async findDocRoot(
+    r: NonNullable<Awaited<ReturnType<RNPlugin['rem']['findOne']>>>
+  ): Promise<NonNullable<Awaited<ReturnType<RNPlugin['rem']['findOne']>>>> {
+    const rootId = await walkToRoot(r._id, async (id) => {
+      const cur = await this.plugin.rem.findOne(id);
+      return (cur as unknown as { parent?: string } | undefined)?.parent;
+    });
+    return (await this.plugin.rem.findOne(rootId)) ?? r;
+  }
+
+  /**
+   * Is `remId` the currently open document's root, or somewhere in its
+   * subtree? Any inconclusive result (no focused pane, doc rem vanished)
+   * defaults to `true` — falls back to the old behavior of just trying the
+   * walk, never a worse outcome than before this check existed.
+   */
+  private async isInFocusedDocument(remId: string): Promise<boolean> {
+    const paneRemId = await this.currentDocId();
+    if (!paneRemId || paneRemId === remId) return true;
+    const doc = await this.plugin.rem.findOne(paneRemId);
+    const descendantIds = doc ? (await doc.getDescendants()).map((d) => d._id) : undefined;
+    return isDescendantAmong(remId, descendantIds);
   }
 
   /** Serialize a Rem including its whole subtree into a register node. */
@@ -1705,17 +2033,28 @@ export class VimAdapter {
     return node;
   }
 
-  /** Create Rems from a register node under `parent` at position `at`. */
-  private async pasteSubtree(node: RegisterNode, parent: unknown, at: number): Promise<string | null> {
+  /**
+   * Create Rems from a register node under `parent` at position `at`.
+   * `count` is the total number of Rems created (this node plus every
+   * descendant) — one `createRem` per node, so it doubles as the number of
+   * native undo-history entries the paste produced (see `undoGroups`).
+   */
+  private async pasteSubtree(
+    node: RegisterNode,
+    parent: unknown,
+    at: number
+  ): Promise<{ id: string; count: number } | null> {
     const created = await this.plugin.rem.createRem();
     if (!created) return null;
     await created.setText(node.text);
     await created.setParent((parent as never) ?? null, at);
     let childAt = 0;
+    let count = 1;
     for (const child of node.children) {
-      await this.pasteSubtree(child, created, childAt++);
+      const r = await this.pasteSubtree(child, created, childAt++);
+      if (r) count += r.count;
     }
-    return created._id;
+    return { id: created._id, count };
   }
 
   /** True if `remId` is one of `ids` or lies inside one of their subtrees. */
@@ -1811,21 +2150,14 @@ export class VimAdapter {
    * (tries `firstDir` first, then the other way). Used to put the cursor on
    * a bullet we just created/moved — selectRem would kill the caret instead.
    */
-  private async walkCaretTo(targetId: string, firstDir: -1 | 1 = 1) {
+  private async walkCaretTo(targetId: string, firstDir: -1 | 1 = 1): Promise<boolean> {
     const { editor, focus } = this.plugin;
-    if ((await focus.getFocusedRem())?._id === targetId) return true;
-    for (const dir of [firstDir, -firstDir] as const) {
-      let prevId: string | null = null;
-      for (let i = 0; i < 60; i++) {
-        await editor.moveCaretVertical(dir as -1 | 1);
-        const f = await focus.getFocusedRem();
-        if (!f) break;
-        if (f._id === targetId) return true;
-        if (f._id === prevId) break; // boundary
-        prevId = f._id;
-      }
-    }
-    return false;
+    return walkToTarget(
+      targetId,
+      firstDir,
+      async () => (await focus.getFocusedRem())?._id,
+      (dir) => editor.moveCaretVertical(dir)
+    );
   }
 
   /** Clear the visual-line trail and its CSS highlight. */
@@ -1922,7 +2254,31 @@ export class VimAdapter {
     if (toSteal.length) await this.plugin.app.stealKeys(toSteal);
     if (toRelease.length) await this.plugin.app.releaseKeys(toRelease);
     this.stolenSpecs = wanted;
+    // Keep in sync with syncEscapeSteal's own bookkeeping — a mode
+    // transition's full diff is authoritative over whatever idle-normal-mode
+    // toggling did before it.
+    this.escapeWanted = wanted.has('escape');
     await this.render();
+  }
+
+  /**
+   * Escape is normally always stolen, but idle normal mode (no pending
+   * op/count) releases it so RemNote's own Ctrl-P/Ctrl-K palette can see the
+   * Escape a user presses to close it — see `escapeWanted`'s doc comment.
+   * Called after every keystroke; only issues a steal/release RPC on an
+   * actual transition, not on every key.
+   */
+  private async syncEscapeSteal() {
+    const wanted = isEscapeWanted(this.state);
+    if (wanted === this.escapeWanted) return;
+    this.escapeWanted = wanted;
+    if (wanted) {
+      await this.plugin.app.stealKeys(['escape']);
+      this.stolenSpecs.add('escape');
+    } else {
+      await this.plugin.app.releaseKeys(['escape']);
+      this.stolenSpecs.delete('escape');
+    }
   }
 
   /** One CSS block (single id) draws the mode label, debug readout, and the
@@ -2011,9 +2367,10 @@ export class VimAdapter {
         letter-spacing: 0.08em; background: ${color}; color: #fff;
         pointer-events: none; opacity: 0.9;
         white-space: pre; text-align: left;
+        max-width: 70vw; overflow: hidden;
       }
       body::before {
-        content: "vim ${mode} rx=${this.dbgCount} done=${this.dbgDone} k=${this.dbgLast} ${this.dbgV} ${this.dbgClip}";
+        content: "vim ${VimAdapter.BUILD} ${mode} rx=${this.dbgCount} done=${this.dbgDone} k=${this.dbgLast} ${this.dbgV} ${this.dbgClip} ${this.dbgLeak} ${this.dbgUndo} ${this.dbgTiming} esc:${this.escapeWanted ? 'steal' : 'free'}";
         position: fixed; left: 8px; bottom: 8px; z-index: 99999; max-width: 90vw;
         font: 10px ui-monospace, monospace; color: #aaa; white-space: nowrap; overflow: hidden;
         background: rgba(0,0,0,0.6); padding: 1px 6px; border-radius: 4px;
