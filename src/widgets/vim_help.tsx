@@ -1,11 +1,23 @@
 import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
+import { useEffect, useRef } from 'react';
 
 /**
  * The `:help` window — a vim cheat sheet written for people who have never
  * used vim, plus the RemNote-specific key differences (shift-blind capture).
  * Opened as a floating widget by `:help` / `;help`; closes on ✕, click
  * outside, or Escape (the adapter closes it when Escape is pressed).
+ *
+ * Scrolling: this widget lives in its own floating-widget iframe, entirely
+ * separate from the main editor's sandboxed plugin iframe where
+ * `VimAdapter`'s `stealKeys`-based key interception runs (see
+ * `src/adapter/adapter.ts`). Once opened it gets real, ordinary DOM focus,
+ * so plain `onKeyDown` on a focusable element is enough — no
+ * `plugin.window.stealKeys` needed here (verified live 2026-07-10; see
+ * DEVELOPMENT.md's work log for the empirical writeup).
  */
+
+/** Roughly one cheat-sheet row's worth of scroll per j/k press. */
+const SCROLL_STEP = 36;
 
 function Key({ k }: { k: string }) {
   return <kbd>{k}</kbd>;
@@ -40,6 +52,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function VimHelp() {
   const plugin = usePlugin();
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const close = async () => {
     const ctx = await plugin.widget.getWidgetContext<WidgetLocation.FloatingWidget>();
@@ -48,9 +61,39 @@ function VimHelp() {
     }
   };
 
+  // Grab real DOM focus as soon as the widget mounts so j/k/arrows work
+  // immediately — no click into the window required first.
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      containerRef.current?.scrollBy({ top: SCROLL_STEP, behavior: 'auto' });
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      containerRef.current?.scrollBy({ top: -SCROLL_STEP, behavior: 'auto' });
+    } else if (e.key === 'Escape') {
+      // Focusing this widget on mount (below) pulls real DOM focus into its
+      // own floating-widget iframe, which means the main editor iframe no
+      // longer has focus — RemNote's app-level key stealing only delivers
+      // StealKeyEvent to whichever iframe currently has focus, so the
+      // adapter's `handleSym`-level "Escape also closes :help" special case
+      // (adapter.ts) never fires anymore. Close directly instead (verified
+      // live 2026-07-10: without this, Escape stopped closing the window).
+      e.preventDefault();
+      e.stopPropagation();
+      void close();
+    }
+  };
+
   return (
-    <div className="vim-help">
+    <div className="vim-help" ref={containerRef} tabIndex={0} onKeyDown={onKeyDown}>
       <style>{`
+        .vim-help:focus { outline: none; }
         .vim-help {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           background: var(--rn-clr-background-primary, #fff);
@@ -77,6 +120,11 @@ function VimHelp() {
           color: var(--rn-clr-content-secondary, #666);
         }
         .vim-help .closeBtn:hover { background: var(--rn-clr-background-secondary, #eee); }
+        .vim-help .titleRow { display: flex; align-items: baseline; gap: 10px; }
+        .vim-help .scrollHint {
+          font-size: 11px; color: var(--rn-clr-content-tertiary, #999);
+          white-space: nowrap;
+        }
         .vim-help .intro {
           background: var(--rn-clr-background-secondary, #f4f4f8);
           border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
@@ -115,7 +163,12 @@ function VimHelp() {
       `}</style>
 
       <header>
-        <h2>Vim Mode — Help</h2>
+        <div className="titleRow">
+          <h2>Vim Mode — Help</h2>
+          <span className="scrollHint">
+            <Key k="j" />/<Key k="k" /> or <Key k="↓" />/<Key k="↑" /> scrolls this window
+          </span>
+        </div>
         <button className="closeBtn" onClick={close} title="Close (Esc)">
           ✕
         </button>

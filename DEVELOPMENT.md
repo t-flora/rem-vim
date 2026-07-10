@@ -734,6 +734,48 @@ User's 5 reports and what changed:
    bullet `p` and after a multi-line `>`/`<` in visual-line each fully
    reverse in one press, and that a subsequent `u` (for an unrelated earlier
    edit) isn't affected.
+### 2026-07-10 — `:help` j/k scroll: native DOM keydown, no stealKeys — live-verified, one focus regression caught+fixed
+
+Added keyboard scrolling to the `:help` cheat sheet (`src/widgets/vim_help.tsx`):
+`j`/`ArrowDown` and `k`/`ArrowUp` scroll the window ~one row (`SCROLL_STEP =
+36`) via `containerRef.current.scrollBy(...)`. Self-contained, widget-only
+change — no engine/adapter/keymap touched.
+
+**Empirical finding (live, CDP-verified against a fresh `e2e/launch.sh`
+instance, port 9223):** the `:help` floating widget runs in its *own*
+CDP target/iframe (`http://localhost:8080/index.html?widgetName=vim_help`),
+entirely separate from the main plugin iframe (`widgetName=index`) where
+`VimAdapter`'s `stealKeys`/`StealKeyEvent` machinery lives. Once the widget
+grabs real DOM focus (`tabIndex={0}` + `.focus()` in a mount `useEffect`),
+plain React `onKeyDown` on the outer div works immediately — `j`/`k`/arrows
+scrolled it correctly every time. Confirmed via `VimAdapter.dbgCount` (the
+`StealKeyEvent` counter) staying flat across all j/k presses made while the
+widget had focus: **RemNote's app-level key stealing never even fires for
+that iframe once it holds focus** — it only intercepts keys reaching the
+main editor iframe. So `plugin.window.stealKeys` was correctly *not* needed
+here; the task's "verify empirically, don't guess" instinct paid off.
+
+**Regression caught by this same live probe:** grabbing focus into the
+widget silently broke the *existing* "Escape closes `:help`" behavior —
+that close path was implemented in `adapter.ts`'s `handleSym` as a
+special-case on the stolen Escape (`if (sym === 'Escape' && this.helpWidgetId)
+closeHelp()`), which only fires when the *main* iframe has focus. With focus
+now living in the widget's own iframe, `dbgCount` stayed flat on Escape too
+— the adapter never saw it, and the window stayed open. Fixed by having
+`vim_help.tsx` close itself locally on `Escape` (calls the same `close()` the
+✕ button uses); `adapter.ts`'s existing special-case is now a harmless no-op
+fallback for the case where focus is back in the editor. Re-verified after
+the fix: Escape closes the widget, ✕ click still closes it (dispatched
+directly against the widget's own CDP target since Playwright's `page.click`
+doesn't reach into the cross-origin widget iframe from the main page — a
+`ctl.mjs` limitation, not a product bug).
+
+Live-verified end to end: fresh `e2e/launch.sh` boot → `;help` → focus
+auto-lands in the widget → `j`×5/`k`×2/`ArrowDown`×2 scroll `scrollTop` by
+exactly `SCROLL_STEP` per press → Escape and ✕ both close it → main editor's
+`dbgCount`/mode never move during any of this. `npm run check-types` clean.
+No unit tests added (pure DOM/widget behavior — nothing to assert against
+`Harness`, consistent with repo testing philosophy for this class of change).
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1817,7 +1859,10 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   `Ctrl-E`/`Ctrl-Y` deliberately unbound — no view-scroll API exists.
 - **Command line** — opened with `;` only (`/` now belongs to RemNote's own
   slash-command menu; `:todo`/`:done`/`:untodo` were removed). `:help` cheat
-  sheet; `:e <name>` search+open (a jump); `:w` acknowledged (autosave);
+  sheet (grabs real DOM focus on open — its own floating-widget iframe, not
+  the main editor's — so `j`/`k`/`↓`/`↑` scroll it via a plain `onKeyDown`,
+  no `stealKeys`; Escape/✕/click-outside all close it); `:e <name>`
+  search+open (a jump); `:w` acknowledged (autosave);
   `:s/pat/repl/[gia]` substitute (visual selection or focused bullet as
   range, `a` = whole doc — but note the shift-blind typeable-regex subset,
   §9); `:vsplit`/`:split`/`:q`/`:only` pane management (undocumented
