@@ -15,6 +15,25 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 (evening) — getting-started tutorial widget added, on `feature/onboarding-tutorial`
+
+New floating widget `src/widgets/vim_tutorial.tsx`: a 14-page linear
+walkthrough (welcome/modes → insert → motions → search → editing →
+cut/copy/paste+marks → visual → visual-line → command line → panes →
+custom keybindings → shift-blindness/limitations → wrap-up), distinct in
+purpose from `:help` (`vim_help.tsx`, a dense reference table meant to be
+scanned, not read once). Opens automatically the first time the plugin
+activates — gated on `plugin.storage.getSynced('vim-tutorial-seen')` in
+`index.tsx`'s `onActivate`, with the widget itself marking that key true on
+mount (so it's set regardless of whether the open was automatic or via the
+new `vim-tutorial` command) — and reachable afterward via **"Vim: Tutorial"**
+in the command palette. Reuses `vim_help.tsx`'s real-DOM-focus-on-mount
+trick (no `stealKeys`) for its own Left/Right/`h`/`l`/Enter/Escape page
+navigation. `check-types`, full unit suite (3222 tests), and `npm run build`
+all clean; not yet live-verified (no engine/adapter changes, so low risk, but
+should still get an e2e pass over open → navigate every page → auto-close →
+does-not-reopen before merging to `main`).
+
 ### 2026-07-10 (later) — integration batch reviewed, hardened, live-verified, MERGED to main
 
 Review + test pass over `integration/vim-feature-batch` (the entry below),
@@ -2265,6 +2284,10 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Cursor visibility** — cursorline row tint + colored left caret bar
   outside insert mode.
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
+- **Getting-started tutorial** — a 14-page walkthrough (`vim_tutorial.tsx`)
+  opens automatically once, on first activation (`vim-tutorial-seen` synced
+  storage flag), and afterward via **"Vim: Tutorial"**; not yet
+  live-verified — see the 2026-07-10 (evening) §0 entry.
 
 Known limitations (beyond §9 platform blockers):
 
