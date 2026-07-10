@@ -336,11 +336,14 @@ export function expandSym(
  * would reach RemNote and REPLACE the live native selection with typed text.
  * Out-of-scope it just arrives raw and is inert to the engine. Unmaps stay
  * strictly per-mode — releasing the key to RemNote is their whole point.
- * Insert and command mode never consult the config.
+ * Insert, command and search mode never consult the config: search steals
+ * the same full printable set as command (bindingsForMode), and indexing
+ * the per-MapMode tables with 'search' would throw — mappings only exist
+ * for the three normal-family modes.
  */
 export function effectiveSpecs(mode: Mode, config: MapConfig): string[] {
   const base = bindingsForMode(mode).map((b) => b.spec);
-  if (mode === 'insert' || mode === 'command') return base;
+  if (mode === 'insert' || mode === 'command' || mode === 'search') return base;
   const specs = new Set(base);
   for (const m of MAP_MODES) {
     for (const spec of Object.values(config.mapSpecs[m])) specs.add(spec);

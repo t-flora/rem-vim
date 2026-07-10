@@ -47,6 +47,21 @@ export class FakeRem {
     this.world.log('rem', 'getChildrenRem', this._id);
     return this.childIds.map((id) => this.world.rems.get(id)!).filter(Boolean);
   }
+  /** Whole subtree, pre-order — the document row order the adapter assumes. */
+  async getDescendants(): Promise<FakeRem[]> {
+    this.world.log('rem', 'getDescendants', this._id);
+    const out: FakeRem[] = [];
+    const walk = (r: FakeRem) => {
+      for (const id of r.childIds) {
+        const kid = this.world.rems.get(id);
+        if (!kid) continue;
+        out.push(kid);
+        walk(kid);
+      }
+    };
+    walk(this);
+    return out;
+  }
   async setText(text: string[]) {
     this.world.log('rem', 'setText', this._id, text.join(''));
     this.text = text;
@@ -179,7 +194,23 @@ export class FakeWorld {
         moveCaret: async (delta: number) => {
           this.caret = clamp(this.caret + delta, 0, this.text.length);
         },
-        moveCaretVertical: async () => {},
+        // Walk editor focus one document row up/down, pre-order over the
+        // open pane doc's subtree — the same "one bullet per line" order the
+        // adapter's walkToBoundary/walkToTarget loops assume. Focus does NOT
+        // move onto the doc root itself (matches the live app: gg stops on
+        // the first bullet, not the title), so at either boundary focus
+        // simply stops changing — exactly the signal those loops terminate
+        // on. A no-op when the focused rem isn't a doc row (e.g. the
+        // single-scratch-rem setups older tests use).
+        moveCaretVertical: async (dir: number) => {
+          const doc = this.paneDocId ? this.rems.get(this.paneDocId) : undefined;
+          if (!doc || !this.focusedRemId) return;
+          const ids = (await doc.getDescendants()).map((r) => r._id);
+          const idx = ids.indexOf(this.focusedRemId);
+          if (idx < 0) return;
+          const next = clamp(idx + Math.sign(dir), 0, ids.length - 1);
+          if (next !== idx) this.focusRow(ids[next]);
+        },
         selectText: async ({ start, end }: { start: number; end: number }) => {
           const s = clamp(Math.min(start, end), 0, this.text.length);
           const e = clamp(Math.max(start, end), 0, this.text.length);
@@ -228,6 +259,15 @@ export class FakeWorld {
     });
   }
 
+  /** Move editor focus to `id`, syncing the single-line editor model. */
+  focusRow(id: string) {
+    this.focusedRemId = id;
+    const rem = this.rems.get(id);
+    this.text = rem ? rem.text.join('') : '';
+    this.caret = clamp(this.caret, 0, this.text.length);
+    this.sel = null;
+  }
+
   private removeSel() {
     if (!this.sel) return;
     this.text = this.text.slice(0, this.sel.start) + this.text.slice(this.sel.end);
@@ -239,6 +279,24 @@ export class FakeWorld {
     const rem = new FakeRem(this, `rem-${this.nextId++}`, text);
     this.rems.set(rem._id, rem);
     return rem;
+  }
+
+  /**
+   * Create a plain document with one child bullet per line, open it in the
+   * fake pane and focus the first bullet — the multi-row setup search/`:N`
+   * tests need (single-line tests keep using makeRem + direct field pokes).
+   */
+  seedDoc(lines: string[]): FakeRem {
+    const doc = this.makeRem(['Doc']);
+    doc.isDocument = true;
+    for (const l of lines) {
+      const kid = this.makeRem([l]);
+      kid.parent = doc._id;
+      doc.childIds.push(kid._id);
+    }
+    this.paneDocId = doc._id;
+    if (doc.childIds.length) this.focusRow(doc.childIds[0]);
+    return doc;
   }
 
   /** Create the "Vim Keymap" doc with the given lines and pin it in storage. */

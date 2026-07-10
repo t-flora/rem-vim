@@ -1723,3 +1723,95 @@ describe('dot-repeat', () => {
     expect(e.lines).toEqual(['a b c']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hardening pass over the 2026-07 integration batch (gf, space-search,
+// surround, case toggle, pane chords, :N, help scroll): the interactions
+// BETWEEN the new features and the pre-existing operator/count/dot/visual
+// machinery, which the per-feature suites above don't cross.
+// ---------------------------------------------------------------------------
+
+describe(':N goto-line (engine seam)', () => {
+  it('a bare number submitted on the command line reaches the adapter verbatim', () => {
+    const e = h(['one', 'two', 'three']);
+    e.keys(';10<cr>');
+    expect(e.lastEx).toBe('10');
+    expect(e.mode).toBe('normal');
+  });
+});
+
+describe('space-search vs the rest of normal mode', () => {
+  it('d<space> cancels the operator — it neither deletes nor enters search', () => {
+    const e = h('abc');
+    e.keys('d ');
+    expect(e.line).toBe('abc');
+    expect(e.mode).toBe('normal');
+    e.keys('x'); // the operator must be gone: x acts alone, not as dx
+    expect(e.line).toBe('bc');
+  });
+
+  it('a pending count neither leaks into the pattern nor survives a cancelled search', () => {
+    const e = h('abcdefgh');
+    e.keys('3 ');
+    expect(e.mode).toBe('search');
+    e.keys('2'); // digits type into the pattern now, they are not counts
+    expect(e.searchLine).toBe('2');
+    e.keys('<esc>');
+    expect(e.mode).toBe('normal');
+    e.keys('l');
+    expect(e.caret).toBe(1); // neither the 3 nor the 2 acted as a count
+  });
+
+  it('non-printable syms are ignored while typing a pattern', () => {
+    const e = h(['alpha', 'beta']);
+    e.keys(' be');
+    e.keys('<tab>');
+    e.keys('<c-d>');
+    expect(e.mode).toBe('search');
+    expect(e.searchLine).toBe('be');
+    e.keys('<cr>');
+    expect(e.row).toBe(1);
+  });
+
+  it('a search jump is not dot-recorded — . replays the last real change', () => {
+    const e = h(['xabc', 'target']);
+    e.keys('x');
+    expect(e.line).toBe('abc');
+    e.keys(' target<cr>');
+    expect(e.row).toBe(1);
+    e.keys('.'); // replays the x on the new line, not the search
+    expect(e.line).toBe('arget');
+  });
+
+  it('space is inert in charwise visual mode (no longer an l synonym)', () => {
+    const e = h('abcdef', 0, 1);
+    e.keys('vl');
+    const sel = { ...e.sel! };
+    e.keys(' ');
+    expect(e.mode).toBe('visual');
+    expect(e.sel).toEqual(sel);
+  });
+
+  it('n/z are normal-mode only — inert in visual mode', () => {
+    const e = h(['foo', 'foo']);
+    e.keys(' foo<cr>');
+    expect(e.row).toBe(1);
+    e.keys('v');
+    e.keys('n');
+    e.keys('z');
+    expect(e.mode).toBe('visual');
+    expect(e.row).toBe(1);
+  });
+});
+
+describe('gs surround stays charwise-only', () => {
+  it('visual-line g then s cancels the chord without touching the text', () => {
+    const e = h(['abc', 'def']);
+    e.keys('vv');
+    expect(e.mode).toBe('visual-line');
+    e.keys('gs');
+    expect(e.mode).toBe('visual-line');
+    e.keys('q'); // would be the '"' delimiter if surround were pending
+    expect(e.lines).toEqual(['abc', 'def']);
+  });
+});
