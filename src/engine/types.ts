@@ -1,5 +1,5 @@
 /** Vim modes. */
-export type Mode = 'normal' | 'insert' | 'visual' | 'visual-line' | 'command';
+export type Mode = 'normal' | 'insert' | 'visual' | 'visual-line' | 'command' | 'search';
 
 /**
  * What the engine sees of the editor at the moment a key arrives.
@@ -97,6 +97,23 @@ export type Action =
    * key loop it uses for real keys (fresh snapshot per key).
    */
   | { t: 'replayKeys'; keys: string[] }
+  /**
+   * `space<pattern><Enter>` (NORMAL mode, search-mode submit): jump the real
+   * cursor to the first match of `pattern` in the whole document, searching
+   * forward from the current position and wrapping to the top if nothing is
+   * found before EOF (vim's `wrapscan`, with the classic "search hit BOTTOM,
+   * continuing at TOP" toast). Match-FINDING is inherently async (it enumerates
+   * every Rem's flattened text via the SDK), so — unlike every other Action —
+   * this one is a request the adapter resolves itself; the engine only knows
+   * the pattern the user typed, never which Rem/offset it lands on.
+   */
+  | { t: 'search'; pattern: string }
+  /**
+   * `n` (dir 1) / the previous-match key (dir -1) in NORMAL mode: repeat the
+   * last `search` pattern in the given direction from the current position.
+   * A no-op (adapter shows a toast) if no search has run yet this session.
+   */
+  | { t: 'searchStep'; dir: -1 | 1 }
   | { t: 'mode'; mode: Mode };
 
 /** The register: either in-line text or whole-line (Rem) content held by the adapter. */
@@ -134,6 +151,8 @@ export interface VimState {
   head: number;
   /** Command-line mode: text typed after `:` (excludes the leading colon). */
   commandLine: string;
+  /** Search mode: pattern typed after `space` (excludes the leading key). */
+  searchLine: string;
   /** Dot-repeat: keys of the normal-mode command currently being typed. */
   keyLog: string[];
   /** Dot-repeat: keys of the last completed normal-mode CHANGE (`.` replays). */
@@ -152,6 +171,7 @@ export function initialState(): VimState {
     anchor: 0,
     head: 0,
     commandLine: '',
+    searchLine: '',
     keyLog: [],
     lastChange: null,
   };

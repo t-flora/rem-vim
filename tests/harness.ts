@@ -1,3 +1,4 @@
+import { findSearchMatch, SearchUnit } from '../src/adapter/pure';
 import { handleKey, initialState } from '../src/engine/engine';
 import { ATOMIC_CH } from '../src/engine/motions';
 import { Action, Snapshot, VimState } from '../src/engine/types';
@@ -38,6 +39,10 @@ export class Harness {
   paneMoves: number[] = [];
   /** Marks: name → row (the adapter stores rem ids). */
   marks: Record<string, number> = {};
+  /** The pattern from the last `search`/`searchStep` Action (adapter-owned state). */
+  lastSearch: string | null = null;
+  /** Whether the last search/searchStep wrapped around the document boundary. */
+  searchWrapped = false;
   state: VimState;
 
   private undoStack: DocState[] = [];
@@ -70,6 +75,9 @@ export class Harness {
    */
   get commandLine() {
     return this.state.commandLine;
+  }
+  get searchLine() {
+    return this.state.searchLine;
   }
 
   keys(seq: string) {
@@ -152,6 +160,25 @@ export class Harness {
     if (this.jumps[this.jumps.length - 1] !== this.row) this.jumps.push(this.row);
     this.jumpPos = this.jumps.length;
     this.marks["'"] = this.row; // the adapter's recordJump sets the ' mark too
+  }
+
+  /**
+   * Mirrors the adapter's `performSearch`, using the SAME pure matching
+   * helper (`findSearchMatch`) — rows stand in for rem ids (stringified,
+   * since the helper is id-based), `this.lines` for the document's flattened
+   * texts in document order. Much simpler than the real adapter (no async
+   * SDK jump/caret-positioning dance needed — a fake editor can just set
+   * row/caret directly), but exercises the identical matching logic.
+   */
+  private runSearch(pattern: string, dir: 1 | -1) {
+    const units: SearchUnit[] = this.lines.map((text, i) => ({ id: String(i), text }));
+    const outcome = findSearchMatch(units, String(this.row), this.caret, pattern, dir);
+    if (!outcome.ok) return;
+    this.recordJump(); // search jumps are Ctrl-O-able, like gg/G
+    this.row = Number(outcome.match.id);
+    this.caret = outcome.match.start;
+    this.searchWrapped = outcome.wrapped;
+    this.sel = null;
   }
 
   private exec(a: Action) {
@@ -366,6 +393,13 @@ export class Harness {
         this.caret = 0;
         break;
       }
+      case 'search':
+        this.lastSearch = a.pattern;
+        this.runSearch(a.pattern, 1);
+        break;
+      case 'searchStep':
+        if (this.lastSearch != null) this.runSearch(this.lastSearch, a.dir);
+        break;
       case 'joinRem': {
         // Mirror the adapter: join with the NEXT SIBLING (same indent, not
         // past a shallower row). The sibling's subtree rows simply stay —

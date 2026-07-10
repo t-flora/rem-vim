@@ -44,6 +44,8 @@ function dispatch(state: VimState, key: string, snap: Snapshot): EngineResult {
       return handleVisualLine(state, key, snap);
     case 'command':
       return handleCommand(state, key, snap);
+    case 'search':
+      return handleSearch(state, key, snap);
   }
 }
 
@@ -126,6 +128,43 @@ function handleCommand(state: VimState, key: string, snap: Snapshot): EngineResu
   return { state, actions: [] };
 }
 
+// ---------------------------------------------------------------- search line
+
+/**
+ * `space<pattern><Enter>` incremental search. Structured exactly like
+ * handleCommand above (accumulate into a buffer, Enter submits, Escape/
+ * Backspace-past-empty cancels) — the difference is what leaving emits: a
+ * `search` Action carrying the raw typed pattern, resolved by the adapter
+ * (match-finding needs async SDK calls the pure engine never makes). Unlike
+ * command mode, search is only ever entered from NORMAL mode (no visual
+ * selection to preserve/clear on the way out), so `leave` is simpler.
+ */
+function handleSearch(state: VimState, key: string, _snap: Snapshot): EngineResult {
+  const leave = (actions: Action[]): EngineResult => ({
+    state: { ...state, mode: 'normal', searchLine: '' },
+    actions: [...actions, { t: 'mode', mode: 'normal' }],
+  });
+  if (key === 'Escape') {
+    // Cancel: no action at all, so the caret/document are left untouched.
+    return leave([]);
+  }
+  if (key === 'Enter') {
+    const pattern = state.searchLine;
+    return leave(pattern ? [{ t: 'search', pattern }] : []);
+  }
+  if (key === 'Backspace') {
+    // Backspacing past the start leaves search mode entirely (mirrors ':').
+    if (state.searchLine.length === 0) {
+      return leave([]);
+    }
+    return { state: { ...state, searchLine: state.searchLine.slice(0, -1) }, actions: [] };
+  }
+  if (key.length === 1) {
+    return { state: { ...state, searchLine: state.searchLine + key }, actions: [] };
+  }
+  return { state, actions: [] };
+}
+
 // ---------------------------------------------------------------- helpers
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -192,8 +231,10 @@ function motionFor(
     case 'h':
     case 'Backspace':
       return simple(cpBack(text, head, count));
+    // ' ' (space) is NOT a synonym here any more — it now starts incremental
+    // search (see the top-level `case ' '` in handleNormal below). `l` alone
+    // still moves right.
     case 'l':
-    case ' ':
       return simple(cpForward(text, head, count));
     case '0':
       return simple(0);
@@ -574,6 +615,21 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     case 'C-i':
       return reset(state, [{ t: 'jump', dir: 1 }]);
 
+    // --- incremental search: repeat the last `space<pattern><CR>` search.
+    // `n` is vim's own key and was free across the whole engine at the time
+    // this was added. Real vim's reverse-search key is `N`, but capitals are
+    // unreachable (shift-blind stealing — see keymap.ts), so an unshifted
+    // stand-in is needed; of the handful of letters still unbound at the
+    // time (re-grep `case '` in this switch before reusing either), `z` was
+    // picked over `q` specifically to leave `q` free for a possible future
+    // macro-record command (vim's own, more idiomatic use for that letter).
+    // Matching itself is async (whole-document Rem enumeration), so it lives
+    // entirely in the adapter — see Action's search/searchStep doc comments.
+    case 'n':
+      return reset(state, [{ t: 'searchStep', dir: 1 }]);
+    case 'z':
+      return reset(state, [{ t: 'searchStep', dir: -1 }]);
+
     // --- number increment / decrement (vim Ctrl-A / Ctrl-X)
     case 'C-a':
     case 'C-x': {
@@ -602,6 +658,16 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     case ':':
     case ';':
       return { state: { ...state, mode: 'command', commandLine: '', count: '', op: null, pending: { p: 'none' } }, actions: [{ t: 'mode', mode: 'command' }] };
+
+    // space: start an incremental search (previously a synonym for `l`
+    // right-motion — see motionFor above; `l` itself is unaffected). Typed
+    // characters accumulate in handleSearch until Enter submits a `search`
+    // Action or Escape cancels without moving.
+    case ' ':
+      return {
+        state: { ...state, mode: 'search', searchLine: '', count: '', op: null, pending: { p: 'none' } },
+        actions: [{ t: 'mode', mode: 'search' }],
+      };
 
     case 'Escape':
       return reset(state);

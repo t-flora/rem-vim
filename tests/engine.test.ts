@@ -830,10 +830,8 @@ describe('edge cases', () => {
     expect(e.line).toBe('bc');
   });
 
-  it('space and backspace move in normal mode', () => {
-    const e = h('abc', 0, 1);
-    e.keys('<space>');
-    expect(e.caret).toBe(2);
+  it('backspace moves left in normal mode (space now starts search, see below)', () => {
+    const e = h('abc', 0, 2);
     e.keys('<bs>');
     expect(e.caret).toBe(1);
   });
@@ -1051,6 +1049,102 @@ describe('command-line mode (Ex)', () => {
     e.keys(':w<cr>');
     e.keys('x');
     expect(e.line).toBe('ello');
+  });
+});
+
+describe('incremental search (space)', () => {
+  it('space enters search mode and types into the buffer', () => {
+    const e = h('abc');
+    e.keys('<space>');
+    expect(e.mode).toBe('search');
+    e.keys('foo');
+    expect(e.searchLine).toBe('foo');
+  });
+
+  it('Enter submits a search Action and returns to normal', () => {
+    const e = h(['alpha', 'bravo', 'charlie']);
+    e.keys('<space>bravo<cr>');
+    expect(e.mode).toBe('normal');
+    expect(e.searchLine).toBe('');
+    expect(e.row).toBe(1); // jumped to the "bravo" line
+    expect(e.lastSearch).toBe('bravo');
+  });
+
+  it('Escape cancels the search prompt WITHOUT moving', () => {
+    const e = h(['alpha', 'bravo', 'charlie'], 0, 2);
+    e.keys('<space>bravo<esc>');
+    expect(e.mode).toBe('normal');
+    expect(e.searchLine).toBe('');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(2);
+    expect(e.lastSearch).toBeNull(); // no search Action was ever emitted
+  });
+
+  it('backspace edits the buffer, and past the start exits search mode', () => {
+    const e = h('abc');
+    e.keys('<space>fo<bs>');
+    expect(e.searchLine).toBe('f');
+    e.keys('<bs><bs>');
+    expect(e.mode).toBe('normal');
+  });
+
+  it('an empty search line just returns to normal (no search Action)', () => {
+    const e = h('abc');
+    e.keys('<space><cr>');
+    expect(e.mode).toBe('normal');
+    expect(e.lastSearch).toBeNull();
+  });
+
+  it('normal-mode editing is unaffected by search-mode keys after exit', () => {
+    const e = h('hello');
+    e.keys('<space>xyz<esc>');
+    e.keys('x');
+    expect(e.line).toBe('ello');
+  });
+
+  it('l still moves right — space no longer aliases it', () => {
+    const e = h('abc', 0, 0);
+    e.keys('l');
+    expect(e.caret).toBe(1);
+    expect(e.mode).toBe('normal');
+  });
+});
+
+describe('search step (n / z)', () => {
+  it('n repeats the last search forward', () => {
+    const e = h(['foo', 'bar foo', 'baz', 'foo end']);
+    e.keys('<space>foo<cr>');
+    expect(e.row).toBe(1); // first match at-or-after row 0 col 0
+    e.keys('n');
+    expect(e.row).toBe(3);
+  });
+
+  it('z repeats the last search backward', () => {
+    const e = h(['foo', 'bar foo', 'baz', 'foo end']);
+    e.keys('<space>foo<cr>');
+    expect(e.row).toBe(1);
+    e.keys('z');
+    expect(e.row).toBe(0);
+  });
+
+  it('n/z with no previous search is a no-op', () => {
+    const e = h(['alpha', 'bravo'], 0, 1);
+    e.keys('n');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(1);
+    e.keys('z');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(1);
+  });
+
+  it('n wraps to the top and z wraps to the bottom', () => {
+    const e = h(['foo', 'middle', 'nothing here']);
+    e.keys('<space>foo<cr>'); // lands on row 0 itself (only match)
+    expect(e.row).toBe(0);
+    e.keys('n');
+    expect(e.row).toBe(0); // wrapped all the way around, only match is here
+    e.keys('z');
+    expect(e.row).toBe(0);
   });
 });
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { RichTextInterface } from '@remnote/plugin-sdk';
 import { ATOMIC_CH } from '../src/engine/motions';
-import { diffCaret, flattenRich, sanitizeInsert, settleRead } from '../src/adapter/pure';
+import {
+  diffCaret,
+  findSearchMatch,
+  flattenRich,
+  sanitizeInsert,
+  SearchUnit,
+  settleRead,
+} from '../src/adapter/pure';
 
 // The adapter's pure data math: the rich-text → model-space flatten (the
 // offset-space contract with RemNote, probed live 2026-07-08), the insert
@@ -190,5 +197,106 @@ describe('settleRead (lag-tolerant reads)', () => {
     const read = async () => values[Math.min(i++, values.length - 1)];
     const out = await settleRead(read, (a, b) => a.v === b.v, { sleep: noSleep });
     expect(out.v).toBe(2);
+  });
+});
+
+describe('findSearchMatch (space-search whole-document matching)', () => {
+  const units = (...texts: string[]): SearchUnit[] =>
+    texts.map((text, i) => ({ id: `r${i}`, text }));
+
+  it('empty pattern is rejected without touching the units', () => {
+    const out = findSearchMatch(units('alpha', 'bravo'), 'r0', 0, '', 1);
+    expect(out).toEqual({ ok: false, reason: 'empty' });
+  });
+
+  it('an invalid regex pattern is reported distinctly from "not found"', () => {
+    const out = findSearchMatch(units('alpha'), 'r0', 0, '(unterminated', 1);
+    expect(out).toEqual({ ok: false, reason: 'badPattern' });
+  });
+
+  it('no units at all → noMatch', () => {
+    const out = findSearchMatch([], undefined, 0, 'x', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('pattern present nowhere in the document → noMatch', () => {
+    const out = findSearchMatch(units('alpha', 'bravo'), 'r0', 0, 'zzz', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('forward: finds the next match in a LATER unit', () => {
+    const out = findSearchMatch(units('alpha', 'bravo', 'charlie'), 'r0', 5, 'bravo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r1', start: 0, end: 5 }, wrapped: false });
+  });
+
+  it('forward: a later match on the SAME unit (after fromOffset) wins over an earlier one', () => {
+    // "foo bar foo" — starting at offset 2 (inside the first "foo"), the
+    // next hit must be the SECOND "foo" (offset 8), not the one already
+    // standing on.
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 2, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 8, end: 11 }, wrapped: false });
+  });
+
+  it('forward: never re-reports a match starting exactly at fromOffset — always progresses', () => {
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 0, 'foo', 1);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.match.start).toBe(8); // skips the offset-0 match itself
+  });
+
+  it('forward: wraps to the top when nothing remains after the current position', () => {
+    const out = findSearchMatch(units('foo', 'middle', 'end'), 'r2', 0, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 3 }, wrapped: true });
+  });
+
+  it('backward: finds the previous match in an EARLIER unit', () => {
+    const out = findSearchMatch(units('alpha', 'bravo', 'charlie'), 'r2', 0, 'alpha', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 5 }, wrapped: false });
+  });
+
+  it('backward: the NEAREST earlier match on the SAME unit wins, not the first one in the document', () => {
+    // "foo bar foo" from just past the SECOND foo (offset 11): the nearest
+    // preceding match is that same second "foo" (start 8), not the first
+    // one at offset 0.
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 11, 'foo', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 8, end: 11 }, wrapped: false });
+  });
+
+  it('backward: wraps to the bottom when nothing precedes the current position', () => {
+    const out = findSearchMatch(units('start', 'middle', 'foo'), 'r0', 0, 'foo', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r2', start: 0, end: 3 }, wrapped: true });
+  });
+
+  it('an unrecognized fromId (e.g. focused Rem outside the document) starts from the top', () => {
+    const out = findSearchMatch(units('foo', 'bar'), 'not-in-doc', 0, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 3 }, wrapped: false });
+  });
+
+  it('pattern is a real regex, not just a literal substring', () => {
+    const out = findSearchMatch(units('no numbers here', 'value 42 units'), 'r0', 0, '\\d+', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r1', start: 6, end: 8 }, wrapped: false });
+  });
+
+  it('matching is case-SENSITIVE (consistent with :g/:s\'s own new RegExp(pat) convention)', () => {
+    const out = findSearchMatch(units('Alpha'), 'r0', 0, 'alpha', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('a single match, searched from its own start, wraps back onto itself in both directions', () => {
+    const fwd = findSearchMatch(units('only'), 'r0', 0, 'only', 1);
+    expect(fwd).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: true });
+    const back = findSearchMatch(units('only'), 'r0', 0, 'only', -1);
+    expect(back).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: true });
+  });
+
+  it('backward from just PAST the only match finds it again without wrapping', () => {
+    // Standing right after the match (offset 4, one past "only"), the
+    // previous match IS that same one — no wrap needed.
+    const out = findSearchMatch(units('only'), 'r0', 4, 'only', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: false });
+  });
+
+  it('a zero-width-capable pattern does not hang (bounded scan, not an infinite loop)', () => {
+    const out = findSearchMatch(units('aaa', 'bbb'), 'r0', 0, 'a*', 1);
+    expect(out.ok).toBe(true); // just needs to terminate with SOME answer
   });
 });
