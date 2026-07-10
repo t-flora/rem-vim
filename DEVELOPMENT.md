@@ -15,7 +15,7 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
-### 2026-07-10 — CUSTOM KEYBINDINGS (`:config`) shipped on branch `keybind-config`
+### 2026-07-10 — CUSTOM KEYBINDINGS (`:config`) — MERGED to main (user-approved after the verification below; developed on `keybind-config`)
 
 **USER DECISIONS (2026-07-09):** config lives in a **RemNote document**
 ("Vim Keymap", one mapping per bullet) edited with vim itself — keyboard-only
