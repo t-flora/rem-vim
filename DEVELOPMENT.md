@@ -15,6 +15,49 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 — 7 feature branches merged into `integration/vim-feature-batch`
+
+Orchestrated 7 features (`gf`, incremental search, visual surround, visual
+case-toggle, `:help` j/k scroll, `:N` goto-line, pane cycling/"tabs") each
+built by a separate agent on its own branch in an isolated git worktree,
+then hand-merged sequentially into `integration/vim-feature-batch` (off
+`main`, not pushed). All 7 branches were rooted at an older `main` commit
+(`cffb8a7`) that predates this same day's `keybind-config` merge, so every
+one of them re-diverged from `bindingsForMode`/`SPEC_TO_SYM` (keymap.ts) —
+superseded on `main` by `mappings.ts`'s `specToSymTable`/`effectiveSpecs` —
+and from the `walkToBoundary` helper (some branches duplicated its inline
+loop instead of calling it, since it didn't exist yet in their base).
+Reconciled during merge: dropped the stale keymap.ts imports in favor of the
+current mappings.ts ones, and pointed `:N`'s `gotoLine` at `walkToBoundary`
+for its walk-to-start leg instead of keeping its independent duplicate.
+
+**The real hazard, twice:** two of git's auto-merges (in `adapter.ts` around
+the `:config` feature / `gotoLine`, and in `pure.ts` around `walkToBoundary`
+/ `findSearchMatch`) silently produced *syntactically valid but wrong*
+brace nesting — git's line-diff matched two unrelated closing-brace lines
+(`  }` / `}`) from two different methods as "common" content, so one
+method's real closing braces got attached to the wrong function and the
+other method was left unclosed until the next real content. `git status`
+showed these as cleanly auto-merged (no conflict markers at all) — the only
+way to catch it was reading the merged result around every such region and
+reconstructing the intended nesting by hand; `tsc`/`check-types` after each
+merge step was the actual backstop that would have caught it if the manual
+read had missed something (a duplicate `ATOMIC_CH` import from an
+unrelated non-conflicting parallel add was in fact only caught by
+`check-types`, not by `git merge`). Same trap hit `tests/adapter-pure.test.ts`
+twice (two separate `describe`/`it` blocks each closing on a generic `});`).
+**Lesson for the next multi-branch merge:** never trust a clean
+`git merge` exit code alone when two branches both add new functions/blocks
+at the same insertion point — re-read the merged region and run
+`check-types` regardless of whether git reported a conflict there.
+
+Final state: `check-types` clean, full suite 608/608 green (up from 351 on
+`main` before this batch), `npm run build` succeeds (pre-existing bundle-
+size warnings only). Per-feature detail is in each branch's own dated entry
+below. None of this has been live-verified in a real RemNote instance yet
+(no instance available this session) — flagged per-feature below; do a live
+pass before merging `integration/vim-feature-batch` into `main`.
+
 ### 2026-07-10 — CUSTOM KEYBINDINGS (`:config`) — MERGED to main (user-approved after the verification below; developed on `keybind-config`)
 
 **USER DECISIONS (2026-07-09):** config lives in a **RemNote document**
@@ -2063,7 +2106,7 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 ## 0.5 Feature status (what works live)
 
 Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
-**351/351** unit tests green (run `npm test` — don't trust this number, verify).
+**608/608** unit tests green (run `npm test` — don't trust this number, verify).
 
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
