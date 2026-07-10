@@ -886,7 +886,15 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
     // through insertText — chips and any rich formatting survive intact.
     // Close first: inserting after the selection doesn't shift `range.start`,
     // so the second insert's offset is still valid on the mutated line.
+    // collapseSelection MUST precede the inserts: unlike the other visual
+    // mutators, gs runs no deleteRange (whose select+cut consumes the native
+    // selection), so the live selection would still be active when the first
+    // insertText's relative moveCaret runs — and a relative move against a
+    // live selection RESIZES it instead of moving the caret (verified live
+    // 2026-07-10: both delimiters landed at the selection start, '()abc'
+    // instead of '(abc)').
     return toMode(cancel, 'normal', [
+      { t: 'collapseSelection', at: range.end },
       { t: 'insertText', at: range.end, text: pair[1] },
       { t: 'insertText', at: range.start, text: pair[0] },
       { t: 'setCaret', at: range.start },

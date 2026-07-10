@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { handleKey, initialState } from '../src/engine/engine';
 import { ATOMIC_CH } from '../src/engine/motions';
 import { Harness } from './harness';
 
@@ -1801,6 +1802,27 @@ describe('space-search vs the rest of normal mode', () => {
     e.keys('z');
     expect(e.mode).toBe('visual');
     expect(e.row).toBe(1);
+  });
+});
+
+describe('gs surround action order (live-selection hazard)', () => {
+  it('emits collapseSelection BEFORE the delimiter inserts', () => {
+    // gs skips deleteRange (chip preservation), so nothing else consumes the
+    // live native selection — without a leading collapseSelection the first
+    // insertText's relative moveCaret RESIZES the selection instead of
+    // moving the caret, and both delimiters land at the selection start
+    // ('()abc' instead of '(abc)'; observed live 2026-07-10). The Harness
+    // can't catch this (its moveCaret is not selection-sensitive), so pin
+    // the raw action sequence.
+    let state = initialState(); // starts in insert mode, like the live plugin
+    const snap = { text: 'abc', caret: 0 };
+    for (const k of ['Escape', 'v', 'l', 'l', 'g', 's']) {
+      state = handleKey(state, k, snap).state;
+    }
+    const { actions } = handleKey(state, '9', snap);
+    const kinds = actions.map((a) => a.t);
+    expect(kinds.indexOf('collapseSelection')).toBeGreaterThanOrEqual(0);
+    expect(kinds.indexOf('collapseSelection')).toBeLessThan(kinds.indexOf('insertText'));
   });
 });
 
