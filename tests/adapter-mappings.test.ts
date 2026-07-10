@@ -147,7 +147,7 @@ describe('7. per-mode steal diffs across mode switches', () => {
   });
 });
 
-describe('7b. steal self-healing (full-set re-steal)', () => {
+describe('7b. steal self-healing (RemNote GC-wipes a plugin steal list)', () => {
   it('a mode change repopulates steals RemNote silently dropped', async () => {
     const { world, adapter } = await boot({ config: ['nmap - gl'] });
     // Simulate the observed live failure: the app forgets every steal while
@@ -161,6 +161,36 @@ describe('7b. steal self-healing (full-set re-steal)', () => {
     await drain(adapter);
     expect(asAny(adapter).state.mode).toBe('normal');
     expect(world.stolen.has('-')).toBe(true); // full normal set re-asserted
+  });
+  it('a stray text edit (leaked keys) heals dead steals without any key arriving', async () => {
+    const { world, adapter } = await boot({ config: ['nmap - gl'] });
+    world.stolen.clear(); // the GC wipe
+    world.textEdited(); // a leaked key typed into the document
+    await tick();
+    await drain(adapter);
+    expect(world.stolen.has('-')).toBe(true);
+    expect(world.stolen.has('d')).toBe(true);
+  });
+  it('a focus change heals dead steals (mouse-only recovery), throttled', async () => {
+    const { world, adapter } = await boot({ config: ['nmap - gl'] });
+    world.stolen.clear();
+    world.focusChanged();
+    await tick();
+    expect(world.stolen.has('-')).toBe(true);
+    world.stolen.clear();
+    world.focusChanged(); // within the throttle window — no re-steal yet
+    await tick();
+    expect(world.stolen.size).toBe(0);
+    await drain(adapter);
+  });
+  it('never re-steals while vim is toggled off', async () => {
+    const { world, adapter } = await boot({ config: ['nmap - gl'] });
+    await adapter.toggle();
+    expect(world.stolen.size).toBe(0);
+    world.textEdited();
+    world.focusChanged();
+    await tick();
+    expect(world.stolen.size).toBe(0);
   });
 });
 

@@ -282,6 +282,11 @@ export class FakeWorld {
   focusChanged() {
     this.emit(AppEvents.FocusedRemChange, {});
   }
+
+  /** A text edit the plugin did not make (native typing / leaked keys). */
+  textEdited() {
+    this.emit(AppEvents.EditorTextEdited, {});
+  }
 }
 
 /** Await the adapter's serialized work queue (private, reached for tests). */

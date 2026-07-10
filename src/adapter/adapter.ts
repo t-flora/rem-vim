@@ -255,6 +255,7 @@ export class VimAdapter {
       if (!this.processing) this.invalidateModel();
       // Config-doc tracking: reload the keymap when focus leaves it.
       void this.trackConfigFocus();
+      void this.reassertSteals();
     });
 
     // A text edit RemNote tells us about while WE are not the one editing
@@ -284,6 +285,9 @@ export class VimAdapter {
           this.dbgLeak = `resync@${this.dbgCount}`;
           this.state = { ...this.state, pending: { p: 'none' }, op: null, opCount: '', count: '' };
           this.invalidateModel(true);
+          // A stray edit outside insert mode is also the signature of LOST
+          // key steals (keys leaking into the document as text) — re-assert.
+          void this.reassertSteals();
           return;
       }
     });
@@ -2492,6 +2496,30 @@ export class VimAdapter {
     // toggling did before it.
     this.escapeWanted = wanted.has('escape');
     await this.render();
+  }
+
+  /** Last steal re-assertion (ms epoch) — throttles reassertSteals. */
+  private lastStealAssert = 0;
+
+  /**
+   * Self-healing for SILENTLY LOST key steals. RemNote's
+   * GlobalStealKeySingleton garbage-collects a plugin's entire steal list
+   * whenever the plugin's load-state map reads 'not-loaded'/'unloading'/
+   * 'error' at any registry update (read from the app bundle 2026-07-10;
+   * a dev-server hiccup is enough to flicker it) — the plugin keeps running
+   * but no key ever arrives again, and since keys are the usual trigger for
+   * applyMode, the full-steal there can't heal it. These two events still
+   * fire without any stolen keys — FocusedRemChange (clicks) and stray
+   * EditorTextEdited (leaked keys typing into the document) — so they
+   * re-assert the current steal set, throttled. Re-stealing is idempotent
+   * (verified live: keys arrive exactly once).
+   */
+  private async reassertSteals() {
+    if (!this.enabled || this.stolenSpecs.size === 0) return;
+    const now = Date.now();
+    if (now - this.lastStealAssert < 1500) return;
+    this.lastStealAssert = now;
+    await this.plugin.app.stealKeys([...this.stolenSpecs]);
   }
 
   /**
