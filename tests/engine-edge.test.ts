@@ -21,7 +21,8 @@ describe('end-of-line correctness', () => {
 
   it('motions at EOL are no-ops, not errors', () => {
     const e = h('abc', 0, 3);
-    for (const k of ['w', 'e', 'l', ' ']) {
+    // ' ' (space) is no longer a motion — it starts incremental search now.
+    for (const k of ['w', 'e', 'l']) {
       e.keys(k);
       expect(e.caret).toBe(3);
     }

@@ -6,9 +6,11 @@ import type { VimState } from '../src/engine/types';
 import {
   classifyStrayEdit,
   computeJumpStep,
+  cyclePaneId,
   decideRedo,
   decideUndo,
   diffCaret,
+  findSearchMatch,
   flattenRich,
   isDescendantAmong,
   isEscapeWanted,
@@ -16,11 +18,13 @@ import {
   resolveInsertCaret,
   retryUntilTrue,
   sanitizeInsert,
+  SearchUnit,
   settleRead,
   truncateLabel,
   walkToBoundary,
   walkToRoot,
   walkToTarget,
+  wrapIndex,
 } from '../src/adapter/pure';
 
 // The adapter's pure data math: the rich-text → model-space flatten (the
@@ -173,6 +177,52 @@ describe('diffCaret (insert-exit caret inference)', () => {
     const caret = diffCaret('aa', 'aaa', 1);
     expect(caret).toBeGreaterThanOrEqual(0);
     expect(caret).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('wrapIndex (flat-order wraparound, gt/gp/gm)', () => {
+  it('steps forward and backward within bounds', () => {
+    expect(wrapIndex(3, 0, 1)).toBe(1);
+    expect(wrapIndex(3, 1, 1)).toBe(2);
+    expect(wrapIndex(3, 1, -1)).toBe(0);
+  });
+
+  it('wraps past the last index back to 0', () => {
+    expect(wrapIndex(3, 2, 1)).toBe(0);
+  });
+
+  it('wraps before 0 back to the last index', () => {
+    expect(wrapIndex(3, 0, -1)).toBe(2);
+  });
+
+  it('a 2-pane layout just toggles', () => {
+    expect(wrapIndex(2, 0, 1)).toBe(1);
+    expect(wrapIndex(2, 1, 1)).toBe(0);
+  });
+
+  it('len 0 returns idx unchanged (nothing to wrap into)', () => {
+    expect(wrapIndex(0, 0, 1)).toBe(0);
+  });
+});
+
+describe('cyclePaneId (next/previous pane id, gt/gp)', () => {
+  it('returns the next id with wraparound', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'a', 1)).toBe('b');
+    expect(cyclePaneId(['a', 'b', 'c'], 'c', 1)).toBe('a');
+  });
+
+  it('returns the previous id with wraparound', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'a', -1)).toBe('c');
+    expect(cyclePaneId(['a', 'b', 'c'], 'b', -1)).toBe('a');
+  });
+
+  it('a single pane has nothing to cycle to', () => {
+    expect(cyclePaneId(['a'], 'a', 1)).toBeUndefined();
+    expect(cyclePaneId([], 'a', 1)).toBeUndefined();
+  });
+
+  it('an unrecognized current id falls back to index 0 instead of throwing', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'not-a-real-id', 1)).toBe('b');
   });
 });
 
@@ -999,5 +1049,106 @@ describe('isDescendantAmong (Ctrl-O document-membership check)', () => {
 
   it('false when the id is not among the descendants', () => {
     expect(isDescendantAmong('z', ['a', 'b', 'c'])).toBe(false);
+  });
+});
+
+describe('findSearchMatch (space-search whole-document matching)', () => {
+  const units = (...texts: string[]): SearchUnit[] =>
+    texts.map((text, i) => ({ id: `r${i}`, text }));
+
+  it('empty pattern is rejected without touching the units', () => {
+    const out = findSearchMatch(units('alpha', 'bravo'), 'r0', 0, '', 1);
+    expect(out).toEqual({ ok: false, reason: 'empty' });
+  });
+
+  it('an invalid regex pattern is reported distinctly from "not found"', () => {
+    const out = findSearchMatch(units('alpha'), 'r0', 0, '(unterminated', 1);
+    expect(out).toEqual({ ok: false, reason: 'badPattern' });
+  });
+
+  it('no units at all → noMatch', () => {
+    const out = findSearchMatch([], undefined, 0, 'x', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('pattern present nowhere in the document → noMatch', () => {
+    const out = findSearchMatch(units('alpha', 'bravo'), 'r0', 0, 'zzz', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('forward: finds the next match in a LATER unit', () => {
+    const out = findSearchMatch(units('alpha', 'bravo', 'charlie'), 'r0', 5, 'bravo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r1', start: 0, end: 5 }, wrapped: false });
+  });
+
+  it('forward: a later match on the SAME unit (after fromOffset) wins over an earlier one', () => {
+    // "foo bar foo" — starting at offset 2 (inside the first "foo"), the
+    // next hit must be the SECOND "foo" (offset 8), not the one already
+    // standing on.
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 2, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 8, end: 11 }, wrapped: false });
+  });
+
+  it('forward: never re-reports a match starting exactly at fromOffset — always progresses', () => {
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 0, 'foo', 1);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.match.start).toBe(8); // skips the offset-0 match itself
+  });
+
+  it('forward: wraps to the top when nothing remains after the current position', () => {
+    const out = findSearchMatch(units('foo', 'middle', 'end'), 'r2', 0, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 3 }, wrapped: true });
+  });
+
+  it('backward: finds the previous match in an EARLIER unit', () => {
+    const out = findSearchMatch(units('alpha', 'bravo', 'charlie'), 'r2', 0, 'alpha', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 5 }, wrapped: false });
+  });
+
+  it('backward: the NEAREST earlier match on the SAME unit wins, not the first one in the document', () => {
+    // "foo bar foo" from just past the SECOND foo (offset 11): the nearest
+    // preceding match is that same second "foo" (start 8), not the first
+    // one at offset 0.
+    const out = findSearchMatch(units('foo bar foo'), 'r0', 11, 'foo', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 8, end: 11 }, wrapped: false });
+  });
+
+  it('backward: wraps to the bottom when nothing precedes the current position', () => {
+    const out = findSearchMatch(units('start', 'middle', 'foo'), 'r0', 0, 'foo', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r2', start: 0, end: 3 }, wrapped: true });
+  });
+
+  it('an unrecognized fromId (e.g. focused Rem outside the document) starts from the top', () => {
+    const out = findSearchMatch(units('foo', 'bar'), 'not-in-doc', 0, 'foo', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 3 }, wrapped: false });
+  });
+
+  it('pattern is a real regex, not just a literal substring', () => {
+    const out = findSearchMatch(units('no numbers here', 'value 42 units'), 'r0', 0, '\\d+', 1);
+    expect(out).toEqual({ ok: true, match: { id: 'r1', start: 6, end: 8 }, wrapped: false });
+  });
+
+  it('matching is case-SENSITIVE (consistent with :g/:s\'s own new RegExp(pat) convention)', () => {
+    const out = findSearchMatch(units('Alpha'), 'r0', 0, 'alpha', 1);
+    expect(out).toEqual({ ok: false, reason: 'noMatch' });
+  });
+
+  it('a single match, searched from its own start, wraps back onto itself in both directions', () => {
+    const fwd = findSearchMatch(units('only'), 'r0', 0, 'only', 1);
+    expect(fwd).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: true });
+    const back = findSearchMatch(units('only'), 'r0', 0, 'only', -1);
+    expect(back).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: true });
+  });
+
+  it('backward from just PAST the only match finds it again without wrapping', () => {
+    // Standing right after the match (offset 4, one past "only"), the
+    // previous match IS that same one — no wrap needed.
+    const out = findSearchMatch(units('only'), 'r0', 4, 'only', -1);
+    expect(out).toEqual({ ok: true, match: { id: 'r0', start: 0, end: 4 }, wrapped: false });
+  });
+
+  it('a zero-width-capable pattern does not hang (bounded scan, not an infinite loop)', () => {
+    const out = findSearchMatch(units('aaa', 'bbb'), 'r0', 0, 'a*', 1);
+    expect(out.ok).toBe(true); // just needs to terminate with SOME answer
   });
 });

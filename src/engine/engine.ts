@@ -44,6 +44,8 @@ function dispatch(state: VimState, key: string, snap: Snapshot): EngineResult {
       return handleVisualLine(state, key, snap);
     case 'command':
       return handleCommand(state, key, snap);
+    case 'search':
+      return handleSearch(state, key, snap);
   }
 }
 
@@ -126,6 +128,43 @@ function handleCommand(state: VimState, key: string, snap: Snapshot): EngineResu
   return { state, actions: [] };
 }
 
+// ---------------------------------------------------------------- search line
+
+/**
+ * `space<pattern><Enter>` incremental search. Structured exactly like
+ * handleCommand above (accumulate into a buffer, Enter submits, Escape/
+ * Backspace-past-empty cancels) — the difference is what leaving emits: a
+ * `search` Action carrying the raw typed pattern, resolved by the adapter
+ * (match-finding needs async SDK calls the pure engine never makes). Unlike
+ * command mode, search is only ever entered from NORMAL mode (no visual
+ * selection to preserve/clear on the way out), so `leave` is simpler.
+ */
+function handleSearch(state: VimState, key: string, _snap: Snapshot): EngineResult {
+  const leave = (actions: Action[]): EngineResult => ({
+    state: { ...state, mode: 'normal', searchLine: '' },
+    actions: [...actions, { t: 'mode', mode: 'normal' }],
+  });
+  if (key === 'Escape') {
+    // Cancel: no action at all, so the caret/document are left untouched.
+    return leave([]);
+  }
+  if (key === 'Enter') {
+    const pattern = state.searchLine;
+    return leave(pattern ? [{ t: 'search', pattern }] : []);
+  }
+  if (key === 'Backspace') {
+    // Backspacing past the start leaves search mode entirely (mirrors ':').
+    if (state.searchLine.length === 0) {
+      return leave([]);
+    }
+    return { state: { ...state, searchLine: state.searchLine.slice(0, -1) }, actions: [] };
+  }
+  if (key.length === 1) {
+    return { state: { ...state, searchLine: state.searchLine + key }, actions: [] };
+  }
+  return { state, actions: [] };
+}
+
 // ---------------------------------------------------------------- helpers
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -192,8 +231,10 @@ function motionFor(
     case 'h':
     case 'Backspace':
       return simple(cpBack(text, head, count));
+    // ' ' (space) is NOT a synonym here any more — it now starts incremental
+    // search (see the top-level `case ' '` in handleNormal below). `l` alone
+    // still moves right.
     case 'l':
-    case ' ':
       return simple(cpForward(text, head, count));
     case '0':
       return simple(0);
@@ -323,6 +364,10 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     if (state.op) {
       if (key === 'l') return applyOperator(state, snap, caret, n);
       if (key === 'h') return applyOperator(state, snap, caret, firstNonBlank(text));
+      // dgf<char> = vim's dF<char> (delete backward-to-and-including char).
+      // Hand off to the same find-prefix pending state `df` uses, keeping
+      // state.op alive so the find continuation below calls applyOperator.
+      if (key === 'f') return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
       return reset(state);
     }
     // g-chords double as unshifted synonyms for capital commands, which are
@@ -336,6 +381,8 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
         return reset(state, [{ t: 'setCaret', at: n }]);
       case 'h': // gh → ^ (first non-blank)
         return reset(state, [{ t: 'setCaret', at: firstNonBlank(text) }]);
+      case 'f': // gf → F (find character backward on the line)
+        return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
       case 'o': // go → O (open bullet above)
         return toMode(state, 'insert', [{ t: 'newBullet', where: 'above' }]);
       case 'a': // ga → A (append at end of line)
@@ -346,6 +393,27 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
         return reset(state, [{ t: 'scroll', dir: 1, count: PAGE }]);
       case 'u': // gu → Ctrl-U (half page up)
         return reset(state, [{ t: 'scroll', dir: -1, count: PAGE }]);
+      // --- pane ("tab") management, normal-mode only. RemNote has no tab
+      // data structure, only split panes (a tree) — these are cycle/manage
+      // commands layered on the pane primitives `:vs`/`:sp`/`:q` already use.
+      // gg/ge/gl/gh/go/ga/gj/gd/gu (above) plus gf/gs (sibling branches) were
+      // taken, so: gt/gp mirror vim's tab-next/tab-prev mnemonic directly;
+      // gn/gc read as new/close; gm ("move") waits for a further h/l for
+      // direction, the same nested-pending shape Ctrl-W already uses for
+      // pane-focus (`pending.p === 'pane'` below).
+      case 't': // gt → next pane (vim tab-next mnemonic)
+        return reset(state, [{ t: 'focusPane', dir: 1 }]);
+      case 'p': // gp → previous pane (vim tab-prev mnemonic; ggt was rejected
+        // because gg already fires on the second g — see engine.test.ts)
+        return reset(state, [{ t: 'focusPane', dir: -1 }]);
+      case 'n': // gn → new pane: vertical split of the current doc, same as
+        // `:vs` with no argument (reuses runEx's splitPane path verbatim).
+        return reset(state, [{ t: 'runEx', cmd: 'vs' }]);
+      case 'c': // gc → close the focused pane, same as `:q` (reuses runEx's
+        // closePane path verbatim).
+        return reset(state, [{ t: 'runEx', cmd: 'q' }]);
+      case 'm': // gm → move pane; waits for h (left/earlier) or l (right/later)
+        return { state: { ...state, pending: { p: 'movePane' }, count: '' }, actions: [] };
     }
     return reset(state);
   }
@@ -354,6 +422,13 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     const st: VimState = { ...state, pending: { p: 'none' } };
     if (key === 'h') return { state: st, actions: [{ t: 'focusPane', dir: -1 }] };
     if (key === 'l' || key === 'w') return { state: st, actions: [{ t: 'focusPane', dir: 1 }] };
+    return { state: st, actions: [] };
+  }
+
+  if (state.pending.p === 'movePane') {
+    const st: VimState = { ...state, pending: { p: 'none' } };
+    if (key === 'h') return { state: st, actions: [{ t: 'movePane', dir: -1 }] };
+    if (key === 'l') return { state: st, actions: [{ t: 'movePane', dir: 1 }] };
     return { state: st, actions: [] };
   }
 
@@ -574,6 +649,21 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     case 'C-i':
       return reset(state, [{ t: 'jump', dir: 1 }]);
 
+    // --- incremental search: repeat the last `space<pattern><CR>` search.
+    // `n` is vim's own key and was free across the whole engine at the time
+    // this was added. Real vim's reverse-search key is `N`, but capitals are
+    // unreachable (shift-blind stealing — see keymap.ts), so an unshifted
+    // stand-in is needed; of the handful of letters still unbound at the
+    // time (re-grep `case '` in this switch before reusing either), `z` was
+    // picked over `q` specifically to leave `q` free for a possible future
+    // macro-record command (vim's own, more idiomatic use for that letter).
+    // Matching itself is async (whole-document Rem enumeration), so it lives
+    // entirely in the adapter — see Action's search/searchStep doc comments.
+    case 'n':
+      return reset(state, [{ t: 'searchStep', dir: 1 }]);
+    case 'z':
+      return reset(state, [{ t: 'searchStep', dir: -1 }]);
+
     // --- number increment / decrement (vim Ctrl-A / Ctrl-X)
     case 'C-a':
     case 'C-x': {
@@ -602,6 +692,16 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     case ':':
     case ';':
       return { state: { ...state, mode: 'command', commandLine: '', count: '', op: null, pending: { p: 'none' } }, actions: [{ t: 'mode', mode: 'command' }] };
+
+    // space: start an incremental search (previously a synonym for `l`
+    // right-motion — see motionFor above; `l` itself is unaffected). Typed
+    // characters accumulate in handleSearch until Enter submits a `search`
+    // Action or Escape cancels without moving.
+    case ' ':
+      return {
+        state: { ...state, mode: 'search', searchLine: '', count: '', op: null, pending: { p: 'none' } },
+        actions: [{ t: 'mode', mode: 'search' }],
+      };
 
     case 'Escape':
       return reset(state);
@@ -713,6 +813,41 @@ function visualRange(state: VimState, snap: Snapshot): { start: number; end: num
   return { start: lo, end: clamp(hi + cpWidthAt(snap.text, hi), 0, Math.max(n, lo)) };
 }
 
+/**
+ * `gs<key>`: visual-mode charwise surround. Delimiter selector -> [open,
+ * close]. Several shifted delimiters RemNote's shift-blind key stealing can
+ * never report on their own (`"`, `*`, `(`, `)`, `{`, `}` — see keymap.ts's
+ * doc comment) are reached the same way `~` is reached via backtick: an
+ * unshifted stand-in, either the literal unshifted key (`'`/`` ` ``/`[`/`]`)
+ * or the physical unshifted sibling of the shifted symbol on a US layout
+ * (`8` for `*`, `9`/`0` for the `(`/`)` pair — the same "same physical key"
+ * logic as `8`→`*`, applied twice). `q` ("quote") is a free mnemonic letter
+ * standing in for the otherwise-unreachable `"`.
+ *
+ *   '   ->  '…'    literal, directly typeable
+ *   `   ->  `…`    literal, directly typeable
+ *   [ ] ->  […]    literal, either bracket key wraps the same pair
+ *   q   ->  "…"    mnemonic ("quote"); `"` is shift+' and unreachable
+ *   8   ->  *…*    unshifted sibling of `*` (shift+8), same physical key
+ *   9 0 ->  (…)    unshifted siblings of `(`/`)` (shift+9 / shift+0)
+ *
+ * Curly braces (`{`/`}`) are deliberately NOT mapped: unlike `(`/`)` there's
+ * no unshifted-sibling digit to piggyback on, and none of the letters still
+ * free in visual mode's dispatch (m, n, r, u, z — checked by grepping
+ * `case '` across handleVisual/motionFor) reads as an obvious curly/brace
+ * mnemonic. Left out rather than picked arbitrarily.
+ */
+const SURROUND_PAIRS: Record<string, [string, string]> = {
+  "'": ["'", "'"],
+  '`': ['`', '`'],
+  '[': ['[', ']'],
+  ']': ['[', ']'],
+  q: ['"', '"'],
+  '8': ['*', '*'],
+  '9': ['(', ')'],
+  '0': ['(', ')'],
+};
+
 function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResult {
   const { text } = snap;
   const n = text.length;
@@ -725,9 +860,51 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
     ]);
   }
 
+  // gs<delimiter>: consumes the very next key as the delimiter selector.
+  // Checked ahead of digit-accumulation/g-dispatch/mode-toggle below so ANY
+  // next key — including digits (`8`, `9`, `0` from the table above) and
+  // letters that would otherwise start a different chord — is read as the
+  // delimiter, never reinterpreted as a count or another command.
+  if (state.pending.p === 'surround') {
+    const cancel: VimState = { ...state, pending: { p: 'none' }, count: '' };
+    const pair = key.length === 1 ? SURROUND_PAIRS[key] : undefined;
+    if (!pair) return { state: cancel, actions: [] };
+    const range = visualRange(state, snap);
+    if (range.start >= range.end) {
+      // Empty selection (only possible on an empty bullet) — no-op, just
+      // leave visual mode like the other visual commands do on a no-op.
+      return toMode(cancel, 'normal', [{ t: 'setCaret', at: range.start }]);
+    }
+    // Deliberately NOT delete-then-reinsert-the-slice (unlike ~/r, or the
+    // skeleton this was first drafted from): insertText runs every payload
+    // through the adapter's sanitizeInsert, which strips ATOMIC_CH — so
+    // round-tripping the selection's own text through it would silently
+    // destroy any rem-reference/image/LaTeX chip inside the selection (the
+    // same lossy path `cw`/register-paste already accept for charwise
+    // edits). Instead we insert ONLY the two plain-ASCII delimiter chars,
+    // around the untouched selection, so nothing inside it ever passes
+    // through insertText — chips and any rich formatting survive intact.
+    // Close first: inserting after the selection doesn't shift `range.start`,
+    // so the second insert's offset is still valid on the mutated line.
+    // collapseSelection MUST precede the inserts: unlike the other visual
+    // mutators, gs runs no deleteRange (whose select+cut consumes the native
+    // selection), so the live selection would still be active when the first
+    // insertText's relative moveCaret runs — and a relative move against a
+    // live selection RESIZES it instead of moving the caret (verified live
+    // 2026-07-10: both delimiters landed at the selection start, '()abc'
+    // instead of '(abc)').
+    return toMode(cancel, 'normal', [
+      { t: 'collapseSelection', at: range.end },
+      { t: 'insertText', at: range.end, text: pair[1] },
+      { t: 'insertText', at: range.start, text: pair[0] },
+      { t: 'setCaret', at: range.start },
+    ]);
+  }
+
   // g-chords: gg/ge escalate to a line-wise selection reaching the document
   // boundary (vim v gg / v G); gl/gh stay charwise, extending the selection
-  // to the line end / first non-blank ($ / ^ synonyms).
+  // to the line end / first non-blank ($ / ^ synonyms); gs starts the
+  // surround-pending state above.
   if (state.pending.p === 'g') {
     const st: VimState = { ...state, pending: { p: 'none' }, count: '' };
     if (key === 'g' || key === 'e') {
@@ -740,6 +917,14 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
       const target = key === 'l' ? cpStart(text, Math.max(0, n - 1)) : firstNonBlank(text);
       const st2 = { ...st, head: clamp(target, 0, Math.max(0, n - 1)) };
       return { state: st2, actions: [selectionAction(st2, snap)] };
+    }
+    // vgf<char> = vim's vF<char> (extend the selection backward to a char).
+    // Hand off to the same find-prefix pending state `vf` uses below.
+    if (key === 'f') {
+      return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
+    }
+    if (key === 's') {
+      return { state: { ...st, pending: { p: 'surround' } }, actions: [] };
     }
     return { state: st, actions: [] };
   }
@@ -862,6 +1047,31 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
       return toMode(state, 'normal', [{ t: 'indent' }]);
     case '<':
       return toMode(state, 'normal', [{ t: 'outdent' }]);
+    case '~':
+    case '`': {
+      // backtick doubles as ~ (Shift+` is invisible to the key stealing) —
+      // same convention as normal-mode `~`. Unlike normal-mode `~`, this
+      // toggles the WHOLE selection (no count-width slicing needed: the
+      // selection itself is the target), and vim's real visual `~` does NOT
+      // yank the original text, so state.register is left untouched.
+      if (slice.includes(ATOMIC_CH)) {
+        // Same refusal as normal-mode `~`: an atomic rich-text placeholder
+        // can't be reconstructed by insertText (sanitizeInsert strips it),
+        // so toggling case around/through one would silently destroy the
+        // chip. Still leave visual mode, like every other visual command.
+        return toMode(state, 'normal', [{ t: 'setCaret', at: range.start }]);
+      }
+      const toggled = [...slice]
+        .map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()))
+        .join('');
+      return toMode(state, 'normal', [
+        { t: 'deleteRange', start: range.start, end: range.end, keepLead: true },
+        { t: 'insertText', at: range.start, text: toggled },
+        // insertText alone would leave the caret after the (same-length)
+        // toggled text; vim leaves the cursor at the START of the region.
+        { t: 'setCaret', at: range.start },
+      ]);
+    }
 
     // command line from charwise visual — range commands (:s) act on the
     // focused bullet ('/' is not stolen; it belongs to RemNote's slash menu)

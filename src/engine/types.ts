@@ -1,5 +1,5 @@
 /** Vim modes. */
-export type Mode = 'normal' | 'insert' | 'visual' | 'visual-line' | 'command';
+export type Mode = 'normal' | 'insert' | 'visual' | 'visual-line' | 'command' | 'search';
 
 /**
  * What the engine sees of the editor at the moment a key arrives.
@@ -80,6 +80,16 @@ export type Action =
   | { t: 'runEx'; cmd: string }
   /** Focus the previous (-1) or next (+1) pane (Ctrl-W h / Ctrl-W l). */
   | { t: 'focusPane'; dir: -1 | 1 }
+  /**
+   * `gm` then `h`/`l`: swap the focused pane with its previous (-1) or next
+   * (+1) neighbor in the SAME flat cycle order `focusPane`/`gt`/`gp` walk
+   * (`getOpenPaneIds()`'s order — panes are actually a tree, not a list, so
+   * "left"/"right" here means "one step earlier/later in that flat order",
+   * not a literal tree-geometry move). Best-effort: a hand-arranged 3+ pane
+   * layout gets rebuilt flat (see `setPaneTree`), so nesting/ratios are not
+   * preserved — same documented tradeoff `:vs`/`:sp`/`:q` already make.
+   */
+  | { t: 'movePane'; dir: -1 | 1 }
   /** Jumplist navigation: Ctrl-O (back, -1) / Ctrl-I (forward, +1). */
   | { t: 'jump'; dir: -1 | 1 }
   /** `m<c>`: remember the focused Rem under a single-char mark name. */
@@ -97,6 +107,23 @@ export type Action =
    * key loop it uses for real keys (fresh snapshot per key).
    */
   | { t: 'replayKeys'; keys: string[] }
+  /**
+   * `space<pattern><Enter>` (NORMAL mode, search-mode submit): jump the real
+   * cursor to the first match of `pattern` in the whole document, searching
+   * forward from the current position and wrapping to the top if nothing is
+   * found before EOF (vim's `wrapscan`, with the classic "search hit BOTTOM,
+   * continuing at TOP" toast). Match-FINDING is inherently async (it enumerates
+   * every Rem's flattened text via the SDK), so — unlike every other Action —
+   * this one is a request the adapter resolves itself; the engine only knows
+   * the pattern the user typed, never which Rem/offset it lands on.
+   */
+  | { t: 'search'; pattern: string }
+  /**
+   * `n` (dir 1) / the previous-match key (dir -1) in NORMAL mode: repeat the
+   * last `search` pattern in the given direction from the current position.
+   * A no-op (adapter shows a toast) if no search has run yet this session.
+   */
+  | { t: 'searchStep'; dir: -1 | 1 }
   | { t: 'mode'; mode: Mode };
 
 /** The register: either in-line text or whole-line (Rem) content held by the adapter. */
@@ -113,10 +140,17 @@ export type Pending =
   | { p: 'textobj'; key: 'i' | 'a' }
   /** Ctrl-W pressed; waiting for the pane-direction key (h/l/w). */
   | { p: 'pane' }
+  /** `gm` pressed; waiting for h (move pane left/earlier) or l (right/later). */
+  | { p: 'movePane' }
   /** `m` pressed; waiting for the mark name. */
   | { p: 'mark' }
   /** `'` pressed; waiting for the mark name to jump to. */
-  | { p: 'gotoMark' };
+  | { p: 'gotoMark' }
+  /**
+   * Visual mode `gs` pressed; waiting for the delimiter selector key (see
+   * `SURROUND_PAIRS` in engine.ts). Charwise visual only.
+   */
+  | { p: 'surround' };
 
 export interface VimState {
   mode: Mode;
@@ -134,6 +168,8 @@ export interface VimState {
   head: number;
   /** Command-line mode: text typed after `:` (excludes the leading colon). */
   commandLine: string;
+  /** Search mode: pattern typed after `space` (excludes the leading key). */
+  searchLine: string;
   /** Dot-repeat: keys of the normal-mode command currently being typed. */
   keyLog: string[];
   /** Dot-repeat: keys of the last completed normal-mode CHANGE (`.` replays). */
@@ -152,6 +188,7 @@ export function initialState(): VimState {
     anchor: 0,
     head: 0,
     commandLine: '',
+    searchLine: '',
     keyLog: [],
     lastChange: null,
   };

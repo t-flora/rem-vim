@@ -1,11 +1,23 @@
 import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
+import { useEffect, useRef } from 'react';
 
 /**
  * The `:help` window — a vim cheat sheet written for people who have never
  * used vim, plus the RemNote-specific key differences (shift-blind capture).
  * Opened as a floating widget by `:help` / `;help`; closes on ✕, click
  * outside, or Escape (the adapter closes it when Escape is pressed).
+ *
+ * Scrolling: this widget lives in its own floating-widget iframe, entirely
+ * separate from the main editor's sandboxed plugin iframe where
+ * `VimAdapter`'s `stealKeys`-based key interception runs (see
+ * `src/adapter/adapter.ts`). Once opened it gets real, ordinary DOM focus,
+ * so plain `onKeyDown` on a focusable element is enough — no
+ * `plugin.window.stealKeys` needed here (verified live 2026-07-10; see
+ * DEVELOPMENT.md's work log for the empirical writeup).
  */
+
+/** Roughly one cheat-sheet row's worth of scroll per j/k press. */
+const SCROLL_STEP = 36;
 
 function Key({ k }: { k: string }) {
   return <kbd>{k}</kbd>;
@@ -40,6 +52,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function VimHelp() {
   const plugin = usePlugin();
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const close = async () => {
     const ctx = await plugin.widget.getWidgetContext<WidgetLocation.FloatingWidget>();
@@ -48,9 +61,39 @@ function VimHelp() {
     }
   };
 
+  // Grab real DOM focus as soon as the widget mounts so j/k/arrows work
+  // immediately — no click into the window required first.
+  useEffect(() => {
+    containerRef.current?.focus();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      containerRef.current?.scrollBy({ top: SCROLL_STEP, behavior: 'auto' });
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      containerRef.current?.scrollBy({ top: -SCROLL_STEP, behavior: 'auto' });
+    } else if (e.key === 'Escape') {
+      // Focusing this widget on mount (below) pulls real DOM focus into its
+      // own floating-widget iframe, which means the main editor iframe no
+      // longer has focus — RemNote's app-level key stealing only delivers
+      // StealKeyEvent to whichever iframe currently has focus, so the
+      // adapter's `handleSym`-level "Escape also closes :help" special case
+      // (adapter.ts) never fires anymore. Close directly instead (verified
+      // live 2026-07-10: without this, Escape stopped closing the window).
+      e.preventDefault();
+      e.stopPropagation();
+      void close();
+    }
+  };
+
   return (
-    <div className="vim-help">
+    <div className="vim-help" ref={containerRef} tabIndex={0} onKeyDown={onKeyDown}>
       <style>{`
+        .vim-help:focus { outline: none; }
         .vim-help {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           background: var(--rn-clr-background-primary, #fff);
@@ -77,6 +120,11 @@ function VimHelp() {
           color: var(--rn-clr-content-secondary, #666);
         }
         .vim-help .closeBtn:hover { background: var(--rn-clr-background-secondary, #eee); }
+        .vim-help .titleRow { display: flex; align-items: baseline; gap: 10px; }
+        .vim-help .scrollHint {
+          font-size: 11px; color: var(--rn-clr-content-tertiary, #999);
+          white-space: nowrap;
+        }
         .vim-help .intro {
           background: var(--rn-clr-background-secondary, #f4f4f8);
           border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
@@ -115,7 +163,12 @@ function VimHelp() {
       `}</style>
 
       <header>
-        <h2>Vim Mode — Help</h2>
+        <div className="titleRow">
+          <h2>Vim Mode — Help</h2>
+          <span className="scrollHint">
+            <Key k="j" />/<Key k="k" /> or <Key k="↓" />/<Key k="↑" /> scrolls this window
+          </span>
+        </div>
         <button className="closeBtn" onClick={close} title="Close (Esc)">
           ✕
         </button>
@@ -132,6 +185,7 @@ function VimHelp() {
           <span className="modeChip" style={{ background: '#d97706' }}>VISUAL</span>
           <span className="modeChip" style={{ background: '#d97706' }}>V-LINE</span>
           <span className="modeChip" style={{ background: '#0ea5e9' }}>COMMAND</span>
+          <span className="modeChip" style={{ background: '#db2777' }}>SEARCH</span>
         </div>
       </div>
 
@@ -160,15 +214,31 @@ function VimHelp() {
             <Row keys={['g', 'g']} desc="top of document" />
             <Row keys={['g', 'e']} desc="bottom of document  (vim: G)" />
             <Row keys={['f', '·']} desc="jump onto next ‘·’ in the line" />
-            <Row keys={[',']} desc="repeat the last f jump (backwards)" />
+            <Row keys={['g', 'f', '·']} desc="jump onto previous ‘·’ in the line  (vim: F)" />
+            <Row keys={[',']} desc="repeat the last f/gf jump (reversed)" />
+          </Section>
+
+          <Section title="Search">
+            <Row keys={['Space']} desc="start a search — type a pattern, Enter jumps to it" />
+            <Row keys={['n']} desc="repeat the search forward  (wraps at the end)" />
+            <Row keys={['z']} desc="repeat the search backward  (vim: N; wraps at the start)" />
+            <Row keys={['Esc']} desc="cancel the search prompt without moving" />
           </Section>
 
           <Section title="Scroll & jumps">
             <Row keys={['Ctrl-d']} desc="half page down" />
             <Row keys={['Ctrl-u']} desc="half page up" />
-            <Row keys={['Ctrl-o']} desc="back to before the last gg/ge/:e jump" />
+            <Row keys={['Ctrl-o']} desc="back to before the last gg/ge/:e/search jump" />
             <Row keys={['Ctrl-i']} desc="forward again" />
             <Row keys={['Ctrl-h', 'Ctrl-l']} desc="focus previous / next pane" />
+          </Section>
+
+          <Section title="Panes ('tabs')">
+            <Row keys={['g', 't']} desc="next pane  (vim tab-next mnemonic)" />
+            <Row keys={['g', 'p']} desc="previous pane  (vim tab-prev mnemonic)" />
+            <Row keys={['g', 'n']} desc="new pane  (vertical split, like :vs)" />
+            <Row keys={['g', 'c']} desc="close this pane  (like :q)" />
+            <Row keys={['g', 'm', 'h/l']} desc="move this pane left / right in the cycle order" />
           </Section>
 
           <Section title="Marks">
@@ -207,10 +277,21 @@ function VimHelp() {
             <Row keys={['d']} desc="cut the selection" />
             <Row keys={['y']} desc="copy it (also to the clipboard)" />
             <Row keys={['p']} desc="paste" />
+            <Row keys={['`']} desc="toggle UPPER/lower case of the selection  (vim: ~, text-select only)" />
             <Row keys={['.']} desc="indent selected bullets  (vim: >)" />
             <Row keys={[',']} desc="outdent them  (vim: <)" />
             <Row keys={[';']} desc="run a command on the selection ↓" />
+            <Row keys={['g', 's', '·']} desc="wrap selection in a delimiter ↓" />
             <Row keys={['Esc']} desc="cancel selection" />
+          </Section>
+
+          <Section title="Wrap selection (gs)">
+            <Row keys={['g', 's', "'"]} desc={"wrap in ' … '"} />
+            <Row keys={['g', 's', '`']} desc="wrap in ` … `" />
+            <Row keys={['g', 's', '[']} desc="wrap in [ … ]  (] also works)" />
+            <Row keys={['g', 's', 'q']} desc={'wrap in " … "  (q = quote)'} />
+            <Row keys={['g', 's', '8']} desc="wrap in * … *  (8 = shift of *)" />
+            <Row keys={['g', 's', '9']} desc="wrap in ( … )  (0 also works)" />
           </Section>
 
           <Section title="Command line">
@@ -218,6 +299,7 @@ function VimHelp() {
             <Row keys={['/']} desc="RemNote's own slash menu (not vim)" />
             <Row keys={[':help']} desc="this window" />
             <Row keys={[':e name']} desc="search + open a page" />
+            <Row keys={[':10']} desc="jump to the 10th bullet from the top" />
             <Row keys={[':s/a/b/']} desc="replace a→b (flags: g all, i case, a doc)" />
             <Row keys={[':vs', ':sp']} desc="split pane right / below (opt. + name)" />
             <Row keys={[':q', ':only']} desc="close pane / keep only this pane" />

@@ -81,6 +81,32 @@ export function diffCaret(pre: string, fresh: string, fallback: number): number 
   return clamp(fresh.length - s, 0, fresh.length);
 }
 
+/**
+ * Wrap `idx` by `dir` steps within `[0, len)`, vim tab-cycle style: past the
+ * last index comes back to 0, before 0 comes back to the last. Shared by
+ * pane-cycling (`gt`/`gp`, Ctrl-W h/l) and move-pane (`gm` h/l), which both
+ * need "the next/previous slot in a flat, wraparound order" and differ only
+ * in what they do with the resulting index. Returns `idx` unchanged when
+ * `len` is 0 (nothing to wrap into).
+ */
+export function wrapIndex(len: number, idx: number, dir: -1 | 1): number {
+  if (len <= 0) return idx;
+  return (idx + dir + len) % len;
+}
+
+/**
+ * The pane id `dir` steps away from `currentId` in `ids` (RemNote's flat
+ * `getOpenPaneIds()` order), wrapping around at the ends. `undefined` when
+ * there's nothing to cycle to (fewer than 2 panes). `currentId` not being
+ * found in `ids` (shouldn't happen live) falls back to index 0 rather than
+ * throwing.
+ */
+export function cyclePaneId(ids: string[], currentId: string, dir: -1 | 1): string | undefined {
+  if (ids.length < 2) return undefined;
+  const idx = Math.max(0, ids.indexOf(currentId));
+  return ids[wrapIndex(ids.length, idx, dir)];
+}
+
 export interface SettleOpts {
   /** Extra confirmation reads after the first (default 3). */
   rounds?: number;
@@ -395,4 +421,104 @@ export async function walkToBoundary(
     if (!id || id === prevId) return;
     prevId = id;
   }
+}
+
+// ------------------------------------------------------------ search
+
+/** One document unit to search: a Rem id and its flattened line text. */
+export interface SearchUnit {
+  id: string;
+  text: string;
+}
+
+/** A single match's location: which Rem, and the char range within it. */
+export interface SearchMatch {
+  id: string;
+  start: number;
+  end: number;
+}
+
+export type SearchOutcome =
+  | { ok: true; match: SearchMatch; wrapped: boolean }
+  | { ok: false; reason: 'empty' | 'badPattern' | 'noMatch' };
+
+/**
+ * Find the next (`dir: 1`) or previous (`dir: -1`) match of `pattern` — a
+ * plain JS regex source, case-sensitive, consistent with `:g`/`:s`'s own
+ * `new RegExp(pat)` convention — across a whole document's flattened Rem
+ * texts, scanning forward/backward from just after/before
+ * `(fromId, fromOffset)` and wrapping around the document boundary like
+ * vim's `wrapscan`. Always progresses to the NEXT hit, never re-reports the
+ * position already standing on — matching real vim, where searching for the
+ * word under the cursor moves you off it (`n`/the prev-match key rely on
+ * this to actually advance on repeat, and the initial `space<pattern><CR>`
+ * submit reuses the exact same call for consistency).
+ *
+ * `units` must already be in TOP-TO-BOTTOM document order (what the
+ * adapter's whole-document Rem enumeration produces); this function does no
+ * Rem/SDK work itself, so every branch is exhaustively unit-testable against
+ * a synthetic unit list. `fromId` not found among `units` (e.g. the focused
+ * Rem is the document root itself, not one of its own descendants) is
+ * treated as "positioned before the very first unit" — a forward search
+ * then starts from the top, a backward one wraps immediately to the bottom.
+ */
+export function findSearchMatch(
+  units: readonly SearchUnit[],
+  fromId: string | undefined,
+  fromOffset: number,
+  pattern: string,
+  dir: 1 | -1
+): SearchOutcome {
+  if (!pattern) return { ok: false, reason: 'empty' };
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, 'g');
+  } catch {
+    return { ok: false, reason: 'badPattern' };
+  }
+  if (units.length === 0) return { ok: false, reason: 'noMatch' };
+
+  interface Hit {
+    unitIdx: number;
+    start: number;
+    end: number;
+  }
+  const hits: Hit[] = [];
+  units.forEach((u, unitIdx) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(u.text))) {
+      hits.push({ unitIdx, start: m.index, end: m.index + m[0].length });
+      // Zero-width matches (e.g. `x*`) would otherwise loop forever at the
+      // same lastIndex.
+      if (m[0].length === 0) re.lastIndex++;
+    }
+  });
+  if (hits.length === 0) return { ok: false, reason: 'noMatch' };
+
+  // -1 (not -Infinity clamped to 0!) when fromId isn't among units at all —
+  // "positioned before the very first unit": every hit counts as forward of
+  // it (so a forward search never reports a spurious wrap), and none counts
+  // as behind it (so a backward search wraps straight to the last hit).
+  // Clamping to 0 instead would wrongly compare a match AT unit 0 against
+  // `fromOffset` as if we were really standing inside unit 0.
+  const startIdx = units.findIndex((u) => u.id === fromId);
+  const toMatch = (h: Hit): SearchMatch => ({ id: units[h.unitIdx].id, start: h.start, end: h.end });
+
+  if (dir === 1) {
+    const isAfter = (h: Hit) =>
+      startIdx === -1 || h.unitIdx > startIdx || (h.unitIdx === startIdx && h.start > fromOffset);
+    const forward = hits.find(isAfter);
+    return { ok: true, match: toMatch(forward ?? hits[0]), wrapped: !forward };
+  }
+  const isBefore = (h: Hit) =>
+    startIdx !== -1 && (h.unitIdx < startIdx || (h.unitIdx === startIdx && h.start < fromOffset));
+  let backward: Hit | undefined;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    if (isBefore(hits[i])) {
+      backward = hits[i];
+      break;
+    }
+  }
+  return { ok: true, match: toMatch(backward ?? hits[hits.length - 1]), wrapped: !backward };
 }

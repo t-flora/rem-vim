@@ -15,6 +15,100 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 (later) — integration batch reviewed, hardened, live-verified, MERGED to main
+
+Review + test pass over `integration/vim-feature-batch` (the entry below),
+then merged to `main`. Two real bugs found and fixed, both invisible to the
+unit suite as it stood:
+
+1. **Search-mode steal crash** (would have bricked the feature live):
+   `effectiveSpecs('search', …)` indexed `config.unmapSpecs['search']` —
+   undefined, the per-mode tables only exist for the three normal-family
+   modes — so `applyMode('search')` threw on every `space`, the prompt never
+   rendered and `/`/`-`/`=`/tab were never stolen while typing a pattern.
+   The feature branch had patched the superseded `bindingsForMode` only; the
+   mappings layer (merged to main the same day from `keybind-config`) never
+   learned about the new mode. Fix: search takes command mode's early return
+   in `effectiveSpecs`. **This is the generalized version of the §0-entry-
+   below's merge lesson: a branch rooted before a big main-side refactor can
+   compile AND pass its own tests yet still crash at the seam the refactor
+   moved** — grep every `Record<Mode/MapMode, …>` consumer when adding a
+   Mode variant. Regression-tested at three layers (mutation-verified: 3
+   tests fail with the fix reverted).
+2. **`gs` surround live mis-insert** (`'()abc'` instead of `'(abc)'`) —
+   caught only by the new live probe: gs skips `deleteRange` (chip
+   preservation), so unlike every other visual mutator the native selection
+   is still live when the first insertText's relative `moveCaret` runs, and
+   a relative move against a live selection RESIZES it (the §"no absolute
+   caret API" constraint). Fix: the surround action list now leads with
+   `collapseSelection`. Pinned by a raw action-order engine test — the
+   Harness cannot catch this class of bug (its moveCaret ignores selection
+   state); anything that mutates text while a native selection is live MUST
+   consume it first (deleteRange does) or collapse it explicitly.
+
+New coverage: `tests/adapter-search.test.ts` (L3 — real VimAdapter driving
+`performSearch`/`gotoLine` against the fake plugin; fake-plugin gained
+`getDescendants` + a document-order `moveCaretVertical` + `seedDoc`, making
+whole-document adapter paths testable), search-mode regression tests in
+`tests/mappings.test.ts`, cross-feature interaction tests in
+`tests/engine.test.ts` (`d<space>` cancels the op, counts don't leak into
+search, dot ignores search, space/n/z inert in visual, gs charwise-only,
+`:N` passthrough). Suite now 634/634 (was 608), `check-types` + build clean.
+
+**Live pass (RemNote 1.26.30, e2e scratch vault): `e2e/batch.mjs` (new)
+17/17 — space-search jump + n/z wrap both directions + wrap toasts + Escape
+cancel + SEARCH badge, `:1`/`:8`/`:999` goto-line incl. clamping, `gf`,
+visual backtick case toggle, `gs9` surround, `gn`/`gc` panes; `run.mjs`
+16/16.** Not live-covered: `gm` pane-move (needs a 3-pane probe), `gt`/`gp`
+(same `focusPane` path as the verified Ctrl-H/Ctrl-L), `:help` j/k scroll
+(live-verified in its own earlier session, see its entry). batch.mjs also
+handles two fresh-launch hazards run.mjs assumes away: click-until-focused
+(a new window swallows synthetic clicks even after bringToFront) and
+navigating from the restored "Daily Document" index page to today's note.
+
+### 2026-07-10 — 7 feature branches merged into `integration/vim-feature-batch`
+
+Orchestrated 7 features (`gf`, incremental search, visual surround, visual
+case-toggle, `:help` j/k scroll, `:N` goto-line, pane cycling/"tabs") each
+built by a separate agent on its own branch in an isolated git worktree,
+then hand-merged sequentially into `integration/vim-feature-batch` (off
+`main`, not pushed). All 7 branches were rooted at an older `main` commit
+(`cffb8a7`) that predates this same day's `keybind-config` merge, so every
+one of them re-diverged from `bindingsForMode`/`SPEC_TO_SYM` (keymap.ts) —
+superseded on `main` by `mappings.ts`'s `specToSymTable`/`effectiveSpecs` —
+and from the `walkToBoundary` helper (some branches duplicated its inline
+loop instead of calling it, since it didn't exist yet in their base).
+Reconciled during merge: dropped the stale keymap.ts imports in favor of the
+current mappings.ts ones, and pointed `:N`'s `gotoLine` at `walkToBoundary`
+for its walk-to-start leg instead of keeping its independent duplicate.
+
+**The real hazard, twice:** two of git's auto-merges (in `adapter.ts` around
+the `:config` feature / `gotoLine`, and in `pure.ts` around `walkToBoundary`
+/ `findSearchMatch`) silently produced *syntactically valid but wrong*
+brace nesting — git's line-diff matched two unrelated closing-brace lines
+(`  }` / `}`) from two different methods as "common" content, so one
+method's real closing braces got attached to the wrong function and the
+other method was left unclosed until the next real content. `git status`
+showed these as cleanly auto-merged (no conflict markers at all) — the only
+way to catch it was reading the merged result around every such region and
+reconstructing the intended nesting by hand; `tsc`/`check-types` after each
+merge step was the actual backstop that would have caught it if the manual
+read had missed something (a duplicate `ATOMIC_CH` import from an
+unrelated non-conflicting parallel add was in fact only caught by
+`check-types`, not by `git merge`). Same trap hit `tests/adapter-pure.test.ts`
+twice (two separate `describe`/`it` blocks each closing on a generic `});`).
+**Lesson for the next multi-branch merge:** never trust a clean
+`git merge` exit code alone when two branches both add new functions/blocks
+at the same insertion point — re-read the merged region and run
+`check-types` regardless of whether git reported a conflict there.
+
+Final state: `check-types` clean, full suite 608/608 green (up from 351 on
+`main` before this batch), `npm run build` succeeds (pre-existing bundle-
+size warnings only). Per-feature detail is in each branch's own dated entry
+below. None of this has been live-verified in a real RemNote instance yet
+(no instance available this session) — flagged per-feature below; do a live
+pass before merging `integration/vim-feature-batch` into `main`.
+
 ### 2026-07-10 — CUSTOM KEYBINDINGS (`:config`) — MERGED to main (user-approved after the verification below; developed on `keybind-config`)
 
 **USER DECISIONS (2026-07-09):** config lives in a **RemNote document**
@@ -734,6 +828,303 @@ User's 5 reports and what changed:
    bullet `p` and after a multi-line `>`/`<` in visual-line each fully
    reverse in one press, and that a subsequent `u` (for an unrelated earlier
    edit) isn't affected.
+### 2026-07-10 — `:help` j/k scroll: native DOM keydown, no stealKeys — live-verified, one focus regression caught+fixed
+
+Added keyboard scrolling to the `:help` cheat sheet (`src/widgets/vim_help.tsx`):
+`j`/`ArrowDown` and `k`/`ArrowUp` scroll the window ~one row (`SCROLL_STEP =
+36`) via `containerRef.current.scrollBy(...)`. Self-contained, widget-only
+change — no engine/adapter/keymap touched.
+
+**Empirical finding (live, CDP-verified against a fresh `e2e/launch.sh`
+instance, port 9223):** the `:help` floating widget runs in its *own*
+CDP target/iframe (`http://localhost:8080/index.html?widgetName=vim_help`),
+entirely separate from the main plugin iframe (`widgetName=index`) where
+`VimAdapter`'s `stealKeys`/`StealKeyEvent` machinery lives. Once the widget
+grabs real DOM focus (`tabIndex={0}` + `.focus()` in a mount `useEffect`),
+plain React `onKeyDown` on the outer div works immediately — `j`/`k`/arrows
+scrolled it correctly every time. Confirmed via `VimAdapter.dbgCount` (the
+`StealKeyEvent` counter) staying flat across all j/k presses made while the
+widget had focus: **RemNote's app-level key stealing never even fires for
+that iframe once it holds focus** — it only intercepts keys reaching the
+main editor iframe. So `plugin.window.stealKeys` was correctly *not* needed
+here; the task's "verify empirically, don't guess" instinct paid off.
+
+**Regression caught by this same live probe:** grabbing focus into the
+widget silently broke the *existing* "Escape closes `:help`" behavior —
+that close path was implemented in `adapter.ts`'s `handleSym` as a
+special-case on the stolen Escape (`if (sym === 'Escape' && this.helpWidgetId)
+closeHelp()`), which only fires when the *main* iframe has focus. With focus
+now living in the widget's own iframe, `dbgCount` stayed flat on Escape too
+— the adapter never saw it, and the window stayed open. Fixed by having
+`vim_help.tsx` close itself locally on `Escape` (calls the same `close()` the
+✕ button uses); `adapter.ts`'s existing special-case is now a harmless no-op
+fallback for the case where focus is back in the editor. Re-verified after
+the fix: Escape closes the widget, ✕ click still closes it (dispatched
+directly against the widget's own CDP target since Playwright's `page.click`
+doesn't reach into the cross-origin widget iframe from the main page — a
+`ctl.mjs` limitation, not a product bug).
+
+Live-verified end to end: fresh `e2e/launch.sh` boot → `;help` → focus
+auto-lands in the widget → `j`×5/`k`×2/`ArrowDown`×2 scroll `scrollTop` by
+exactly `SCROLL_STEP` per press → Escape and ✕ both close it → main editor's
+`dbgCount`/mode never move during any of this. `npm run check-types` clean.
+No unit tests added (pure DOM/widget behavior — nothing to assert against
+`Harness`, consistent with repo testing philosophy for this class of change).
+### 2026-07-10 — Visual-mode case toggle (` / ~): charwise ships, visual-line skipped
+
+On branch `feature/visual-case-toggle` (one of 7 concurrent feature
+branches, not yet merged to main). `` ` ``/`~` now also work in charwise
+visual mode: select text with `v`, press `` ` `` (or `~` — same shift-blind
+symbol per CLAUDE.md), every letter in the selection flips case, and it
+returns to normal mode with the cursor at the selection start. Ported
+straight from normal-mode `~` (`engine.ts`'s `handleVisual`, next to the
+`d`/`c`/`y`/`p` cases): `deleteRange` (keepLead) + `insertText` with the
+case-flipped slice, then an explicit `setCaret` back to `range.start`
+(insertText alone leaves the caret after the same-length toggled text).
+Deliberately does **not** yank — real vim's visual `~` never touches a
+register, so `state.register` is left alone (unlike `d`/`c`/`y` which all
+call `withCharRegister`). Kept the `ATOMIC_CH` guard from the normal-mode
+sibling (a selection containing a rich-text chip would otherwise get
+silently destroyed by delete+reinsert, since `insertText`/`sanitizeInsert`
+strips the placeholder) — on a hit it still exits to normal mode, matching
+every other visual command's behavior, just without editing the text.
+Visual-LINE `` ` `` was considered and **skipped**: toggling every bullet in
+a multi-Rem selection would need a brand-new `Action` (there's no existing
+way to read/write text on Rems other than the focused line — the line-wise
+ops like `indentSelection`/`deleteRemSelection` are opaque SDK calls, not
+per-character text edits), so it's not the "trivial to add" case the task
+allowed for. 6 new tests in `tests/engine.test.ts` (mixed/lower/upper-case
+selections, non-letter passthrough, no-yank check, chip refusal);
+`check-types` clean, full suite 367/367 green.
+### 2026-07-10 — `gf<char>`: g-chord synonym for `F` (find char backward)
+
+Added `gf<char>` as the shift-blind synonym for vim's `F<char>` (dead code
+before now — real `F` can never reach the engine via RemNote's shift-blind
+key stealing), reusing the existing `find`-pending continuation so
+`dgf<char>`, `,`-repeat, and counts all work unchanged; mirrored into
+charwise visual (`vgf<char>`). `T`/backward-till stays out of scope (not
+requested). 4 new unit tests added; `:help` and §0.5 updated. Branch:
+`feature/gf-backward-find`.
+### 2026-07-10 — `gs<delim>` visual surround, on branch `feature/visual-surround`
+
+New charwise-visual command: select text, `gs` then a delimiter key wraps the
+selection in a paired delimiter and drops back to normal mode with the caret
+on the opening delimiter (`foo` selected, `gs'` → `'foo'`). Implemented as a
+new `pending: { p: 'surround' }` engine state, the same shape as the existing
+`find`/`textobj` pending sub-states — `g` then `s` (a new case in the visual
+`g`-chord dispatch) arms it, the next key is read as the delimiter selector
+against a `SURROUND_PAIRS` table and consumed unconditionally. No new
+`Action` variants: the wrap composes out of two `insertText`s (open, close)
+plus a `setCaret`, all pre-existing.
+
+**Delimiter table** (full doc comment on `SURROUND_PAIRS` in engine.ts):
+`'`→`'…'` and `` ` ``→`` `…` `` and `[`/`]`→`[…]` are literal, directly-typeable
+keys; `q`→`"…"` (mnemonic — `"` is shift+`'`, unreachable, see §9
+shift-blindness), `8`→`*…*` (unshifted sibling of `*`=shift+8, same physical
+key), `9`/`0`→`(…)` (unshifted siblings of `(`/`)`=shift+9/shift+0). Curly
+braces intentionally left unmapped — no unshifted-sibling digit to piggyback
+on the way parens got one, and no free letter in visual mode's dispatch read
+as an obvious curly mnemonic; skipped rather than picked arbitrarily.
+
+**Deviation from the drafted skeleton, worth flagging:** the first pass
+followed the obvious "delete the range, insert `open+slice+close`" pattern
+(mirroring `~`/`r`) — this FAILED a new atomic-chip test: `insertText`'s
+payload always runs through `sanitizeInsert`, which strips `ATOMIC_CH`, so
+round-tripping the selection's own text through it silently ate any
+rem-reference/image/LaTeX chip inside the selection. Fixed by never touching
+the selection at all: insert the close delimiter at `range.end`, then the
+open delimiter at `range.start` (close first, so the second insert's offset
+isn't shifted by the first) — nothing inside the selection ever passes
+through `insertText`, so chips and rich formatting now survive a `gs` wrap
+intact. This is actually strictly better than the charwise-register chip
+limitation noted below (`p`/`dw` do lose chips; `gs` doesn't), and confirmed
+correct against the real adapter's `insertAt`/model-tracking too, not just
+the harness — see `updateModel`'s `insertText` case in adapter.ts, which
+keeps `this.model` accurate between the two sequential inserts of one key.
+Skipped visual-LINE support: wrapping "each selected bullet" would need to
+mutate multiple Rems, which the engine's single-line `Snapshot` can't express
+without a new multi-Rem `Action` — out of scope for what was asked (charwise
+only), and would have violated the "no new Action types" constraint anyway.
+
+Tests: 12 new cases in `tests/engine.test.ts` (`gs` entry, every delimiter,
+unmapped-key cancel, empty-selection no-op, atomic-chip preservation, a stray
+count digit mid-chord). `npm run check-types && npm test` green. `;help`
+sheet and this file's §0.5 updated.
+### 2026-07-10 — `:N` goto-line Ex command added (feature/goto-line branch)
+
+Added vim's `:N` (e.g. `:10`) — jump to the Nth bullet from the top of the
+document (this codebase's "line" = one Rem, per the existing convention).
+Matched as a bare-digit regex in `runEx` before the verb switch, same spot as
+the `:s`/`:g` regex checks (a lone number isn't `verb arg`-shaped). New
+`gotoLine(n)` helper in `adapter.ts`: walks to the document start the same
+way `goDoc`'s `'start'` case does (repeated `moveCaretVertical(-1)` until
+focus stops changing, capped at 200 hops), then hops `moveCaretVertical(1)`
+exactly `n-1` more times — checking focus after **every** hop on this leg
+(no batching), because unlike a true boundary walk, an unchecked hop here is
+only harmless once the real last line is reached; short of that it lands on
+the wrong interior line. `n <= 1` clamps to line 1 (vim has no line 0). Calls
+`recordJump()` first, same as `gg`/`G`/`:e` — `Ctrl-O`-able. No engine
+changes: `:N` rides the existing `runEx` leaf action, which already
+invalidates the model (dirty) for every Ex command.
+`npm run check-types` and `npm test` (360/360) pass; no dedicated adapter
+test added (consistent with `goDoc`/`gg`/`G`, which also have none — this is
+SDK-dependent live behavior). No running RemNote instance was available in
+this environment, so this round has **not** been live-verified — do that
+before trusting it fully; §9's live-testing checklist applies. `:help` and
+§0.5 updated.
+### 2026-07-10 — Pane cycling / "tabs" (`gt`/`gp`/`gn`/`gc`/`gm`) on branch `feature/pane-tabs`
+
+**Context:** user asked for vim-tab-style bindings. RemNote has no tab data
+structure, only split PANES (a tree via `getCurrentWindowTree`/
+`setRemWindowTree`, plus `getOpenPaneIds`/`getFocusedPaneId`/
+`setFocusedPaneId`) — already backing the shipped `:vs`/`:sp`/`:q`/`:only`
+(§0.5). Two pieces of the original ask didn't survive contact with the
+codebase (resolved with the user beforehand, not re-litigated here): `ggt`
+for "previous tab" is unusable (`gg` already fires immediately on the second
+`g`); bare `tc`/`tn`/`tm=`/`tm-` collide with `t` already being the
+till-forward-find prefix (`pending.p==='find'`). Final scheme — all
+normal-mode-only g-chords, the same unshifted-synonym mechanism as
+`gl`/`gh`/`go`/`ga`/`gj`/`gd`/`gu`:
+
+- **`gt` / `gp`** — next / previous pane (vim tab-next/prev mnemonic).
+  Deliberately reuse the EXISTING `focusPane` Action (the one `Ctrl-W h/l`
+  and the direct `Ctrl-H`/`Ctrl-L` bindings already emit) instead of adding a
+  duplicate Action — `gt`/`gp` cycle panes with the exact same wraparound
+  semantics, just reachable without the Ctrl-W chord (which never arrives on
+  the desktop Electron app; §9). No new adapter exec case needed for these
+  two.
+- **`gn`** — new pane: emits `{ t: 'runEx', cmd: 'vs' }`, i.e. literally the
+  same code path `:vs` (no arg) already takes — vertical split of the
+  current doc, focus follows. Zero new adapter code.
+- **`gc`** — close pane: emits `{ t: 'runEx', cmd: 'q' }`, same path as `:q`.
+- **`gm` then `h`/`l`** — move the focused pane left/right within the SAME
+  flat cycle order `gt`/`gp` walk (`getOpenPaneIds()`'s order; panes are
+  really a tree, so this is "earlier/later in that flat order," not literal
+  tree geometry). New `movePane` Action, implemented via the EXISTING
+  `paneLeaves()`/`setPaneTree()` helpers `:vs`/`:sp`/`:q` already use (swap
+  two entries in the leaf list, rebuild flat, re-focus the moved pane) —
+  reusing that machinery kept the risk low enough that this was **implemented,
+  not skipped** as the bonus-piece fallback allowed. Same documented
+  trade-off as `:vs`/`:sp`/`:q`: a hand-arranged 3+ pane layout gets rebuilt
+  flat along `'row'`, so nesting/ratios aren't preserved.
+- Extracted the wraparound-index math shared by `focusPane` and `movePane`
+  into two pure helpers in `pure.ts`: `wrapIndex(len, idx, dir)` and
+  `cyclePaneId(ids, currentId, dir)` (built on `wrapIndex`) — `focusPane`'s
+  exec case was refactored to call `cyclePaneId` instead of the inline
+  modulo math it had before.
+
+Letters chosen after re-grepping the live `pending.p==='g'` switch in
+`engine.ts` right before implementing: `g e l h o a j d u` were already
+taken; `f`/`s` are reserved for sibling branches (`feature/gf-backward-find`,
+`feature/visual-surround`); `t`/`p` were reserved for this branch by the
+user up front. `n`/`c`/`m` were free and picked for mnemonic fit
+(new/close/move).
+
+Tests: `wrapIndex`/`cyclePaneId` unit-tested in `adapter-pure.test.ts`
+(wraparound both directions, <2-pane no-op, unrecognized id fallback);
+`gt`/`gp`/`gn`/`gc`/`gm` action-emission tested in `engine.test.ts`,
+including that `gm`+non-h/l cancels cleanly and none of these are
+dot-repeatable — matching the existing test bar for `:vs`/`:sp`/`:q` (which
+are also only tested at the `runEx` cmd-string level, since the actual SDK
+pane RPCs aren't meaningfully unit-testable). **Not live-verified** — no
+running RemNote instance in this environment; flag for a live/e2e pass
+before merge, `movePane`'s `setRemWindowTree` rebuild especially (same class
+of risk `:vs`/`:sp`/`:q` already carry, per §9's `positionAmongstSiblings`
+race note). `npm run check-types`, `npm test` (378/378), and `npm run build`
+all green.
+### 2026-07-10 — Incremental search (`space`/`n`/`z`) — on `feature/space-search`, NOT yet live-verified
+
+Vim-style whole-document search, built on a branch parallel to several other
+in-flight feature branches (keybind-config among them) — merge order/
+conflicts are the orchestrator's problem, not addressed here.
+
+**Design:** new `'search'` `Mode` (types.ts) + `state.searchLine` buffer,
+handled by `handleSearch()` in engine.ts — structurally a copy of
+`handleCommand` (accumulate/Enter-submits/Escape-cancels/Backspace-past-
+start-exits), entered only from NORMAL mode. Submitting emits `{t:'search',
+pattern}`; bare `n`/`z` in NORMAL mode emit `{t:'searchStep', dir:1|-1}`
+directly (no mode change — same shape as `.`). Match-FINDING lives entirely
+in the adapter (`performSearch`, adapter.ts) since it needs async whole-
+document Rem enumeration — the engine never sees a match, only the typed
+pattern. The actual matching logic is a new pure, SDK-free helper,
+`findSearchMatch` (pure.ts): given a list of `{id, text}` units (already in
+document order), a `(fromId, fromOffset)` position and a direction, it
+returns the next/previous regex match plus whether it had to wrap — fully
+unit-testable without any Rem/SDK involvement, per this repo's stated
+testing philosophy that the pure core is what's worth testing hardest. One
+real bug caught BY writing its tests: naively clamping an unrecognized
+`fromId` to unit index 0 made a forward search from "position unknown"
+occasionally report a false wrap (or a backward search skip a real wrap) —
+fixed by treating "not found" as index `-1` ("before the very first unit")
+instead of clamping to `0`, so the direction comparisons degrade correctly
+instead of accidentally comparing against unit 0's `fromOffset`.
+
+**Adapter wiring:** `performSearch` reuses `allDocumentRems()` — a new
+helper factored out of `globalDelete` (`:g/pat/d`'s existing whole-document
+enumeration, `getOpenPaneRemId` → `getDescendants().slice(0,500)`), so
+there's exactly one "enumerate the whole document" code path, not two. Each
+Rem's text goes through `flattenRich` (the same model-space flatten every
+motion uses), so match offsets land correctly on lines with a rem
+reference/image/LaTeX chip. The actual jump reuses `focusRemById` (the same
+primitive `gotoMark`/Ctrl-O already use — a `walkCaretTo` row-walk, falling
+back to `openRem` for an out-of-reach target) after `recordJump()` (so
+search jumps are `Ctrl-O`-able, like `gg`/`G`/`:e`). Since this sandbox has
+no absolute-caret API (only a *relative* `moveCaret`, see the CLAUDE.md
+section on this), landing the caret at the exact match OFFSET within the
+target line — as opposed to just the target Rem — required re-reading where
+the jump's row-walk actually left the real caret (`invalidateModel()` then a
+fresh `snapshot()`) and walking a relative delta from there via
+`stopsBetween`. This is, as far as I can tell, the first call site in this
+file that does intra-line positioning after a cross-Rem jump; every
+prior jump (`gotoMark`, `goDoc`, Ctrl-O) just lands wherever the row-walk
+happens to leave the caret and stops there.
+
+**The `space`/`l` collision (deliberate, per the task):** `space` was
+previously a synonym for `l` (right-motion) — `keymap.ts`'s `named` array
+already stole it, and `motionFor`'s `case 'l': case ' ':` treated them
+identically. That alias is now GONE (`motionFor` only matches `'l'`); `space`
+alone starts search. `l` itself is completely unaffected. This is a real,
+if minor, behavior change for anyone who'd been pressing space out of vim
+muscle memory for right-motion — worth calling out explicitly since it's not
+obvious from a diff that only adds code.
+
+**The `n`/prev-match key choice:** `n` was confirmed reserved for this
+feature (next match) — free across the whole engine, matches real vim. Real
+vim's reverse-search key is `N`, but shifted keys are unreachable (shift-
+blind stealing, keymap.ts's header), so an unshifted stand-in is needed.
+Re-grepping `case '` in engine.ts's normal-mode switch at implementation
+time confirmed `q` and `z` were still the only free single letters (as the
+task brief predicted). Picked **`z`** over `q` — no strong mnemonic either
+way, but `q` is vim's own macro-record key, a much more idiomatic future use
+for that letter than anything `z` currently means in this codebase, so `z`
+was the lower-regret choice. Documented at both call sites (engine.ts's
+`case 'z'` comment, `vim_help.tsx`'s Search section) in case a future
+contributor wants to revisit it.
+
+**Other adapter changes:** `Mode`-keyed records (`MODE_COLORS`/
+`MODE_COLORS_DARK`/`MODE_LABELS`) and `bindingsForMode` (keymap.ts) gained a
+`search` case — the last one steals the same full printable set as command
+mode (a typed pattern needs digits/`-`/`/` etc., not just the normal-mode
+subset). `render()` shows the typed pattern prefixed with `/` (vim
+convention) while composing, mirroring exactly how command mode shows `:`.
+
+**Tests:** engine suite covers search-mode entry/typing/Enter-submit/
+Escape-cancel/backspace-to-exit (mirroring the existing command-line test
+block) and `n`/`z` dispatch including wraparound, all via `Harness` (which
+implements `search`/`searchStep` by calling the SAME `findSearchMatch`
+helper the real adapter uses, with document rows standing in for Rem ids —
+much simpler than the real adapter since a fake editor can just set
+row/caret directly instead of doing the real jump-then-reposition dance, but
+it exercises the identical matching logic, so the tests mean something).
+`findSearchMatch` itself has a dedicated pure-unit suite (17 cases:
+empty/bad-pattern/no-match rejections, forward/backward same-unit and
+cross-unit matches — including "nearest match wins, not first-in-document"
+for backward — both wrap directions, the not-found-fromId edge case, real
+regex patterns, case-sensitivity, and a zero-width-match termination check).
+**388/388 unit tests green** (`npm test`); `npm run check-types` clean.
+**Not live-verified** — no RemNote instance available this session; the
+cross-Rem jump-then-reposition path in particular (new territory, see above)
+should get an e2e pass before this is trusted the way `gg`/`:e` are.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1766,22 +2157,25 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 ## 0.5 Feature status (what works live)
 
 Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
-**351/351** unit tests green (run `npm test` — don't trust this number, verify).
+**608/608** unit tests green (run `npm test` — don't trust this number, verify).
 
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
 - **Modes** — `i` insert / `Esc` normal / `v` charwise visual / `vv`
-  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line; mode badge
-  bottom-right; per-mode key stealing (insert releases everything but Esc).
+  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line / `space`
+  incremental search; mode badge bottom-right; per-mode key stealing (insert
+  releases everything but Esc).
 - **Motions** — `h l 0 w b e f<c> t<c>` `,`(reverse find repeat), counts
   (incl. `[count]f/t`, e.g. `2fx`, `d2fx`); code-point safe (emoji and
   atomic elements are one character to every motion/edit);
   g-chords for shift-blind capitals: `gl`=`$` `gh`=`^` `gg` `ge`=`G`
-  `ga`=`A` (append at line end).
+  `ga`=`A` (append at line end) `gf<c>`=`F<c>` (find char backward,
+  landing on it).
   `e` uses I-beam semantics (any forward progress counts), so `de` on
   `a asdf` deletes just `a`.
 - **Operators** — `d c y` + motions/text objects (`dw de db dd df<c> dt<c>
-  diw daw`), `dgl`=`d$`, `dgh`=`d^`, `x X s S D C`, `r<c>`, backtick=`~`.
+  diw daw`), `dgl`=`d$`, `dgh`=`d^`, `dgf<c>`=`dF<c>`, `x X s S D C`, `r<c>`,
+  backtick=`~`.
 - **Text objects** — `iw aw`, pairs `ib ab`(=`i(`/`a(`) `i[ a[`, quotes
   `i' a'` `` i` a` `` — under d/c/y and in charwise visual (`vi[`). `i{`/`i"`
   exist in the engine but are untypeable live (shifted keys).
@@ -1794,8 +2188,18 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Dot-repeat `.`** — repeats the last completed normal-mode change (`dw`,
   `3x`, `r<c>`, `p`, `gj`, `C-a`…). Changes that enter insert mode (`cw`,
   `o`) are NOT recorded — inserted text never reaches the engine.
-- **Charwise visual** — `v` + `h/l/w/b/e/f/gl/gh` to shape; `d x c s y p o`;
-  `gg/ge/G` escalate to line-wise to the doc boundary.
+- **Charwise visual** — `v` + `h/l/w/b/e/f/gf/gl/gh` to shape; `d x c s y p o`,
+  backtick=`~` (toggle case of the whole selection, no yank, cursor lands at
+  the selection start — vim semantics); `gg/ge/G` escalate to line-wise to
+  the doc boundary. Visual-line has no case-toggle binding (would need a new
+  multi-Rem-text `Action`, not just an engine change — skipped as out of
+  scope for a "select some text" ask). `gs<delim>` wraps the selection in a
+  paired delimiter and returns to normal on the opening delimiter —
+  `'`/`` ` ``/`[`/`]` literal, `q`=`"` `8`=`*` `9`/`0`=`(`/`)` mnemonic
+  (shift-blind stand-ins; full table in engine.ts's `SURROUND_PAIRS` doc
+  comment). Unlike charwise deletes/pastes, `gs` never round-trips the
+  selection's own text through `insertText`, so it's safe across a
+  rem-reference/image/LaTeX chip (see the known-limitations note below).
 - **Visual-line (multi-bullet)** — extend with `j/k`/counts/`gg/ge`; `d`/`x`
   cut, `y` yank, `p` paste, `.`/`,` indent/outdent; `;` or `/` opens the
   command line over the selection; registers carry whole subtrees; caret
@@ -1808,16 +2212,40 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   recovery) — clipboard gets RemNote's own `- bullet` serialization. Badge
   `clip:` field shows which path fired (`clip:native`/`clip:api`/
   `clip:exec`/`clip:FAIL`).
-- **Jumplist** — `Ctrl-O`/`Ctrl-I` over `gg`/`ge`/`:e` jumps (vim
+- **Incremental search** — `space<pattern><Enter>` jumps the real cursor to
+  the first match at-or-after the caret, searching every Rem in the
+  document (top-to-bottom, same enumeration as `:g/pat/d`); `n` repeats
+  forward, `z` repeats backward (vim's `N` — `z` was the free-letter pick,
+  see engine.ts's comment on the case). Wraps around the document boundary
+  like vim's `wrapscan`, with a "search hit BOTTOM/TOP" toast. Pattern is a
+  plain JS regex, case-sensitive (same convention as `:g`/`:s`). `space` was
+  previously a synonym for `l` (right-motion) — that alias is gone now that
+  space starts search; `l` itself is unaffected. A search jump is
+  `Ctrl-O`-able like `gg`/`:e`. Live-verified 2026-07-10 (`e2e/batch.mjs`:
+  jump, `n`/`z` repeat in both directions, wrap toasts, Escape cancel) after
+  fixing the search-mode steal-set crash — see the review entry in §0.
+- **Jumplist** — `Ctrl-O`/`Ctrl-I` over `gg`/`ge`/`:e`/search jumps (vim
   truncate-forward semantics).
 - **Panes** — `Ctrl-H`/`Ctrl-L` focus previous/next pane (the vim-classic
   `C-w h`/`C-w l` chord is also bound but a real Ctrl+W never reaches the
-  desktop app — Electron eats it; see §9).
+  desktop app — Electron eats it; see §9). `gt`/`gp` do the same next/prev
+  cycling as unshifted g-chords (tab-next/prev mnemonic, branch
+  `feature/pane-tabs`; they ride the same `focusPane` path as the
+  live-verified Ctrl-H/Ctrl-L); `gn` new pane (`:vs`'s path) and `gc` close
+  pane (`:q`'s path) live-verified 2026-07-10 (`e2e/batch.mjs`); `gm` then
+  `h`/`l` move the focused pane left/right in that same cycle order
+  (best-effort — rebuilds the pane tree flat, same tradeoff as
+  `:vs`/`:sp`/`:q` below; NOT live-verified — needs a 3-pane layout probe).
 - **Scrolling** — `Ctrl-D`/`Ctrl-U` (caret page-moves; view follows).
   `Ctrl-E`/`Ctrl-Y` deliberately unbound — no view-scroll API exists.
 - **Command line** — opened with `;` only (`/` now belongs to RemNote's own
   slash-command menu; `:todo`/`:done`/`:untodo` were removed). `:help` cheat
-  sheet; `:e <name>` search+open (a jump); `:w` acknowledged (autosave);
+  sheet (grabs real DOM focus on open — its own floating-widget iframe, not
+  the main editor's — so `j`/`k`/`↓`/`↑` scroll it via a plain `onKeyDown`,
+  no `stealKeys`; Escape/✕/click-outside all close it); `:e <name>`
+  search+open (a jump); `:N` (e.g. `:10`) jump to the Nth bullet from the
+  top (a jump; clamps to the last line if the doc is shorter, matching
+  vim's `:999`-past-EOF); `:w` acknowledged (autosave);
   `:s/pat/repl/[gia]` substitute (visual selection or focused bullet as
   range, `a` = whole doc — but note the shift-blind typeable-regex subset,
   §9); `:vsplit`/`:split`/`:q`/`:only` pane management (undocumented
@@ -1846,7 +2274,10 @@ Known limitations (beyond §9 platform blockers):
   image/LaTeX chip deletes it correctly (and the native clipboard keeps full
   fidelity), but `p` pastes the text minus the chip — a chip can't be
   recreated from plain text. Whole-line registers (`dd`/`yy`/visual-line)
-  keep full rich fidelity. `r`/`~` refuse ranges containing a chip.
+  keep full rich fidelity. `r`/`~` refuse ranges containing a chip. `gs`
+  (visual surround) is the exception: it only inserts delimiters around the
+  selection rather than reinserting the selection itself, so a chip inside a
+  `gs`-wrapped range survives untouched.
 - Charwise visual uses a real native text selection, so RemNote's floating
   formatting toolbar pops up over it (harmless; keys keep working).
 - Capitals act as their lowercase key (shift-blind stealing); use synonyms.

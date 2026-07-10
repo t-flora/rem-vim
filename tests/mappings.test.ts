@@ -348,6 +348,33 @@ describe('renderKeys / listMappingLines', () => {
   });
 });
 
+describe('search mode (regression: effectiveSpecs threw for mode "search" pre-fix)', () => {
+  // The space-search feature was built against the pre-mappings keymap and
+  // patched bindingsForMode only; effectiveSpecs then indexed
+  // config.unmapSpecs['search'] — undefined — and threw inside applyMode,
+  // leaving the search prompt unrendered and '/', '-', '=', tab unstolen.
+  it('steals exactly the command-line set (a typed pattern needs every printable)', () => {
+    expect(() => effectiveSpecs('search', emptyConfig())).not.toThrow();
+    expect(new Set(effectiveSpecs('search', emptyConfig()))).toEqual(
+      new Set(effectiveSpecs('command', emptyConfig()))
+    );
+    const specs = new Set(effectiveSpecs('search', emptyConfig()));
+    for (const s of ['/', '-', '=', '\\', 'tab', 'space', 'enter', 'backspace']) {
+      expect(specs.has(s)).toBe(true);
+    }
+  });
+  it('never consults the config: maps add nothing, unmaps release nothing', () => {
+    const { config } = parseMappings(['nmap <c-j> l', 'unmap x']);
+    const specs = new Set(effectiveSpecs('search', config));
+    expect(specs.has('ctrl+j')).toBe(false); // mapped lhs not stolen in search
+    expect(specs.has('x')).toBe(true); // unmap does not leak into search
+  });
+  it('expandSym never expands while typing a search pattern', () => {
+    const { config } = parseMappings(['map x dd']);
+    expect(expandSym(config, { mode: 'search', pending: { p: 'none' } }, 'x')).toBeNull();
+  });
+});
+
 // type-only usage so the import is exercised
 const _cfgType: MapConfig = emptyConfig();
 void _cfgType;

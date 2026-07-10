@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { handleKey, initialState } from '../src/engine/engine';
+import { ATOMIC_CH } from '../src/engine/motions';
 import { Harness } from './harness';
 
 const h = (lines: string[] | string, row = 0, caret = 0) =>
@@ -207,6 +209,12 @@ describe('operators with motions', () => {
     const e2 = h('hello world', 0, 6);
     e2.keys('dgh');
     expect(e2.line).toBe('world');
+  });
+
+  it('dgf<char> deletes backward-to-and-including the char (live d F)', () => {
+    const e = h('hello world', 0, 11);
+    e.keys('dgfo');
+    expect(e.line).toBe('hello w');
   });
 
   it('d with count: d2w', () => {
@@ -446,6 +454,14 @@ describe('visual mode (charwise, plain v)', () => {
     expect(e2.line).toBe('  ');
   });
 
+  it('vgf<char> extends the selection backward to a char (live v F)', () => {
+    const e = h('hello world', 0, 10); // head on the 'd'
+    e.keys('vgfw');
+    expect(e.sel).toEqual({ start: 6, end: 11 }); // "world"
+    e.keys('d');
+    expect(e.line).toBe('hello ');
+  });
+
   it('vc changes the selection', () => {
     const e = h('hello world', 0, 0);
     e.keys('vllllcbye<esc>');
@@ -488,6 +504,139 @@ describe('visual mode (charwise, plain v)', () => {
     expect(e2.vSelRows).toEqual([1, 3]);
     e2.keys('d');
     expect(e2.lines).toEqual(['a']);
+  });
+});
+
+describe('visual mode case toggle (` / ~)', () => {
+  it('toggles a mixed-case selection and returns to normal mode at its start', () => {
+    const e = h('AbCdEf');
+    e.keys('vlll`'); // selects "AbCd"
+    expect(e.line).toBe('aBcDEf');
+    expect(e.mode).toBe('normal');
+    expect(e.caret).toBe(0);
+  });
+
+  it('~ is the same command (shift-blind synonym)', () => {
+    const e = h('AbCdEf');
+    e.keys('vlll~');
+    expect(e.line).toBe('aBcDEf');
+  });
+
+  it('toggles an all-lowercase selection to uppercase', () => {
+    const e = h('hello world', 0, 0);
+    e.keys('ve`'); // selects "hello"
+    expect(e.line).toBe('HELLO world');
+  });
+
+  it('toggles an all-uppercase selection to lowercase', () => {
+    const e = h('HELLO world', 0, 0);
+    e.keys('ve`');
+    expect(e.line).toBe('hello world');
+  });
+
+  it('non-letter characters in the selection pass through unchanged', () => {
+    const e = h('a1 b2!c', 0, 0);
+    e.keys('v$`'); // selects the whole line
+    expect(e.line).toBe('A1 B2!C');
+  });
+
+  it('does not yank into the register — vim visual ~ never yanks', () => {
+    const e = h('ab CD', 0, 0);
+    e.keys('yl'); // char register = 'a'
+    e.keys('$vh`'); // select "CD", toggle -> "cd"
+    expect(e.line).toBe('ab cd');
+    e.keys('0p'); // paste: still the ORIGINAL 'a', unaffected by the toggle
+    expect(e.line).toBe('aab cd');
+  });
+
+  it('refuses a selection containing an atomic-element placeholder', () => {
+    const line = `see ${ATOMIC_CH} end`;
+    const e = h(line, 0, 0);
+    e.keys('v$`'); // selects the whole line, including the chip
+    expect(e.line).toBe(line);
+    expect(e.mode).toBe('normal');
+  });
+});
+
+describe('gs (visual surround)', () => {
+  it('a bare g still opens the ordinary g-chord (other g-chords unaffected by adding gs)', () => {
+    const e = h('hello', 0, 1);
+    e.keys('vgld'); // gl = $ (end of line), unrelated to the new gs chord
+    expect(e.line).toBe('h');
+  });
+
+  it("gs' wraps the selection in single quotes and returns to normal on the open delimiter", () => {
+    const e = h('foo bar');
+    e.keys("vllgs'");
+    expect(e.line).toBe("'foo' bar");
+    expect(e.mode).toBe('normal');
+    expect(e.caret).toBe(0); // caret lands on the opening delimiter
+  });
+
+  it('gs` wraps in backticks (literal, directly typeable)', () => {
+    const e = h('foo bar');
+    e.keys('vllgs`');
+    expect(e.line).toBe('`foo` bar');
+  });
+
+  it('gs[ and gs] both wrap in square brackets', () => {
+    const e1 = h('foo bar');
+    e1.keys('vllgs[');
+    expect(e1.line).toBe('[foo] bar');
+
+    const e2 = h('foo bar');
+    e2.keys('vllgs]');
+    expect(e2.line).toBe('[foo] bar');
+  });
+
+  it('gsq wraps in double quotes (mnemonic: " itself is unreachable, shift-blind)', () => {
+    const e = h('foo bar');
+    e.keys('vllgsq');
+    expect(e.line).toBe('"foo" bar');
+  });
+
+  it('gs8 wraps in asterisks (8 is the unshifted sibling of * on the same key)', () => {
+    const e = h('foo bar');
+    e.keys('vllgs8');
+    expect(e.line).toBe('*foo* bar');
+  });
+
+  it('gs9 and gs0 both wrap in parens (unshifted siblings of ( and ))', () => {
+    const e1 = h('foo bar');
+    e1.keys('vllgs9');
+    expect(e1.line).toBe('(foo) bar');
+
+    const e2 = h('foo bar');
+    e2.keys('vllgs0');
+    expect(e2.line).toBe('(foo) bar');
+  });
+
+  it('an unmapped delimiter key cancels the pending surround with no change', () => {
+    const e = h('foo bar');
+    e.keys('vllgsz'); // 'z' is not in SURROUND_PAIRS
+    expect(e.line).toBe('foo bar');
+    expect(e.mode).toBe('visual'); // selection survives, just like an invalid find/textobj key
+  });
+
+  it('empty selection (empty bullet) is a no-op that still leaves visual mode', () => {
+    const e = h('');
+    e.keys("vgs'");
+    expect(e.line).toBe('');
+    expect(e.mode).toBe('normal');
+  });
+
+  it('wrapping a selection containing an atomic rich-text chip is allowed (only inserts around it, never rewrites it)', () => {
+    const CHIP = ATOMIC_CH;
+    const e = h(`see ${CHIP} end`, 0, 0);
+    // select "see <chip>" (5 caret stops: s,e,e,' ',chip)
+    e.keys('vllllgs\'');
+    expect(e.line).toBe(`'see ${CHIP}' end`);
+  });
+
+  it('count prefix before gs is ignored (surround acts on the existing selection, not a repeat count)', () => {
+    const e = h('foo bar');
+    e.keys("vll2gs'"); // count digit arrives mid-chord; surround still wraps once
+    expect(e.line).toBe("'foo' bar");
   });
 });
 
@@ -699,6 +848,22 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
     expect(e.caret).toBe(3); // back forward to the o it started on
   });
 
+  it('gf<char> is the unshifted-synonym trigger for F: finds backward, landing ON the char', () => {
+    const e = h('the lazy dog', 0, 8); // caret just after "lazy", before the space
+    e.keys('gfl');
+    expect(e.caret).toBe(4); // ON the l of "lazy", not one before/after it
+    e.keys('x');
+    expect(e.line).toBe('the azy dog');
+  });
+
+  it(', after gf repeats the backward find forward (lastFind tracks the g-chord as F)', () => {
+    const e = h('xoxo', 0, 3);
+    e.keys('gfo');
+    expect(e.caret).toBe(1);
+    e.keys(',');
+    expect(e.caret).toBe(3); // back forward to the o it started on
+  });
+
   it('visual tx selects up to but NOT including the x', () => {
     const e = h('abcx');
     e.keys('vtxd');
@@ -830,10 +995,8 @@ describe('edge cases', () => {
     expect(e.line).toBe('bc');
   });
 
-  it('space and backspace move in normal mode', () => {
-    const e = h('abc', 0, 1);
-    e.keys('<space>');
-    expect(e.caret).toBe(2);
+  it('backspace moves left in normal mode (space now starts search, see below)', () => {
+    const e = h('abc', 0, 2);
     e.keys('<bs>');
     expect(e.caret).toBe(1);
   });
@@ -877,6 +1040,68 @@ describe('panes (Ctrl-W chord, Ctrl-H/Ctrl-L direct)', () => {
     e.keys('<c-h><c-l><c-l>');
     expect(e.paneMoves).toEqual([-1, 1, 1]);
     expect(e.mode).toBe('normal');
+  });
+});
+
+describe('pane ("tab") g-chords: gt/gp/gn/gc/gm', () => {
+  it('gt emits focusPane(+1) (next pane, vim tab-next mnemonic)', () => {
+    const e = h('x');
+    e.keys('gt');
+    expect(e.paneMoves).toEqual([1]);
+    expect(e.mode).toBe('normal');
+  });
+
+  it('gp emits focusPane(-1) (previous pane, vim tab-prev mnemonic)', () => {
+    const e = h('x');
+    e.keys('gp');
+    expect(e.paneMoves).toEqual([-1]);
+    expect(e.mode).toBe('normal');
+  });
+
+  it('gt/gp chain and stay in normal mode', () => {
+    const e = h('x');
+    e.keys('gtgtgp');
+    expect(e.paneMoves).toEqual([1, 1, -1]);
+    expect(e.mode).toBe('normal');
+  });
+
+  it('gn emits runEx("vs") — new pane, same path as :vs', () => {
+    const e = h('x');
+    e.keys('gn');
+    expect(e.lastEx).toBe('vs');
+  });
+
+  it('gc emits runEx("q") — close pane, same path as :q', () => {
+    const e = h('x');
+    e.keys('gc');
+    expect(e.lastEx).toBe('q');
+  });
+
+  it('gm then h emits movePane(-1) (move left/earlier)', () => {
+    const e = h('x');
+    e.keys('gmh');
+    expect(e.paneSwaps).toEqual([-1]);
+    expect(e.mode).toBe('normal');
+  });
+
+  it('gm then l emits movePane(+1) (move right/later)', () => {
+    const e = h('x');
+    e.keys('gml');
+    expect(e.paneSwaps).toEqual([1]);
+  });
+
+  it('gm then an unrelated key cancels with no action (only h/l complete it)', () => {
+    const e = h('x');
+    e.keys('gmx');
+    expect(e.paneSwaps).toEqual([]);
+    expect(e.mode).toBe('normal');
+  });
+
+  it('none of the pane g-chords are dot-repeatable (not DOT_MUTATING)', () => {
+    const e = h('x');
+    e.keys('gt');
+    e.keys('.');
+    expect(e.paneMoves).toEqual([1]); // the '.' did not replay a pane cycle
   });
 });
 
@@ -1051,6 +1276,102 @@ describe('command-line mode (Ex)', () => {
     e.keys(':w<cr>');
     e.keys('x');
     expect(e.line).toBe('ello');
+  });
+});
+
+describe('incremental search (space)', () => {
+  it('space enters search mode and types into the buffer', () => {
+    const e = h('abc');
+    e.keys('<space>');
+    expect(e.mode).toBe('search');
+    e.keys('foo');
+    expect(e.searchLine).toBe('foo');
+  });
+
+  it('Enter submits a search Action and returns to normal', () => {
+    const e = h(['alpha', 'bravo', 'charlie']);
+    e.keys('<space>bravo<cr>');
+    expect(e.mode).toBe('normal');
+    expect(e.searchLine).toBe('');
+    expect(e.row).toBe(1); // jumped to the "bravo" line
+    expect(e.lastSearch).toBe('bravo');
+  });
+
+  it('Escape cancels the search prompt WITHOUT moving', () => {
+    const e = h(['alpha', 'bravo', 'charlie'], 0, 2);
+    e.keys('<space>bravo<esc>');
+    expect(e.mode).toBe('normal');
+    expect(e.searchLine).toBe('');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(2);
+    expect(e.lastSearch).toBeNull(); // no search Action was ever emitted
+  });
+
+  it('backspace edits the buffer, and past the start exits search mode', () => {
+    const e = h('abc');
+    e.keys('<space>fo<bs>');
+    expect(e.searchLine).toBe('f');
+    e.keys('<bs><bs>');
+    expect(e.mode).toBe('normal');
+  });
+
+  it('an empty search line just returns to normal (no search Action)', () => {
+    const e = h('abc');
+    e.keys('<space><cr>');
+    expect(e.mode).toBe('normal');
+    expect(e.lastSearch).toBeNull();
+  });
+
+  it('normal-mode editing is unaffected by search-mode keys after exit', () => {
+    const e = h('hello');
+    e.keys('<space>xyz<esc>');
+    e.keys('x');
+    expect(e.line).toBe('ello');
+  });
+
+  it('l still moves right — space no longer aliases it', () => {
+    const e = h('abc', 0, 0);
+    e.keys('l');
+    expect(e.caret).toBe(1);
+    expect(e.mode).toBe('normal');
+  });
+});
+
+describe('search step (n / z)', () => {
+  it('n repeats the last search forward', () => {
+    const e = h(['foo', 'bar foo', 'baz', 'foo end']);
+    e.keys('<space>foo<cr>');
+    expect(e.row).toBe(1); // first match at-or-after row 0 col 0
+    e.keys('n');
+    expect(e.row).toBe(3);
+  });
+
+  it('z repeats the last search backward', () => {
+    const e = h(['foo', 'bar foo', 'baz', 'foo end']);
+    e.keys('<space>foo<cr>');
+    expect(e.row).toBe(1);
+    e.keys('z');
+    expect(e.row).toBe(0);
+  });
+
+  it('n/z with no previous search is a no-op', () => {
+    const e = h(['alpha', 'bravo'], 0, 1);
+    e.keys('n');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(1);
+    e.keys('z');
+    expect(e.row).toBe(0);
+    expect(e.caret).toBe(1);
+  });
+
+  it('n wraps to the top and z wraps to the bottom', () => {
+    const e = h(['foo', 'middle', 'nothing here']);
+    e.keys('<space>foo<cr>'); // lands on row 0 itself (only match)
+    expect(e.row).toBe(0);
+    e.keys('n');
+    expect(e.row).toBe(0); // wrapped all the way around, only match is here
+    e.keys('z');
+    expect(e.row).toBe(0);
   });
 });
 
@@ -1401,5 +1722,118 @@ describe('dot-repeat', () => {
     expect(e.lines).toEqual(['a b', 'c']);
     e.keys('.');
     expect(e.lines).toEqual(['a b c']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hardening pass over the 2026-07 integration batch (gf, space-search,
+// surround, case toggle, pane chords, :N, help scroll): the interactions
+// BETWEEN the new features and the pre-existing operator/count/dot/visual
+// machinery, which the per-feature suites above don't cross.
+// ---------------------------------------------------------------------------
+
+describe(':N goto-line (engine seam)', () => {
+  it('a bare number submitted on the command line reaches the adapter verbatim', () => {
+    const e = h(['one', 'two', 'three']);
+    e.keys(';10<cr>');
+    expect(e.lastEx).toBe('10');
+    expect(e.mode).toBe('normal');
+  });
+});
+
+describe('space-search vs the rest of normal mode', () => {
+  it('d<space> cancels the operator — it neither deletes nor enters search', () => {
+    const e = h('abc');
+    e.keys('d ');
+    expect(e.line).toBe('abc');
+    expect(e.mode).toBe('normal');
+    e.keys('x'); // the operator must be gone: x acts alone, not as dx
+    expect(e.line).toBe('bc');
+  });
+
+  it('a pending count neither leaks into the pattern nor survives a cancelled search', () => {
+    const e = h('abcdefgh');
+    e.keys('3 ');
+    expect(e.mode).toBe('search');
+    e.keys('2'); // digits type into the pattern now, they are not counts
+    expect(e.searchLine).toBe('2');
+    e.keys('<esc>');
+    expect(e.mode).toBe('normal');
+    e.keys('l');
+    expect(e.caret).toBe(1); // neither the 3 nor the 2 acted as a count
+  });
+
+  it('non-printable syms are ignored while typing a pattern', () => {
+    const e = h(['alpha', 'beta']);
+    e.keys(' be');
+    e.keys('<tab>');
+    e.keys('<c-d>');
+    expect(e.mode).toBe('search');
+    expect(e.searchLine).toBe('be');
+    e.keys('<cr>');
+    expect(e.row).toBe(1);
+  });
+
+  it('a search jump is not dot-recorded — . replays the last real change', () => {
+    const e = h(['xabc', 'target']);
+    e.keys('x');
+    expect(e.line).toBe('abc');
+    e.keys(' target<cr>');
+    expect(e.row).toBe(1);
+    e.keys('.'); // replays the x on the new line, not the search
+    expect(e.line).toBe('arget');
+  });
+
+  it('space is inert in charwise visual mode (no longer an l synonym)', () => {
+    const e = h('abcdef', 0, 1);
+    e.keys('vl');
+    const sel = { ...e.sel! };
+    e.keys(' ');
+    expect(e.mode).toBe('visual');
+    expect(e.sel).toEqual(sel);
+  });
+
+  it('n/z are normal-mode only — inert in visual mode', () => {
+    const e = h(['foo', 'foo']);
+    e.keys(' foo<cr>');
+    expect(e.row).toBe(1);
+    e.keys('v');
+    e.keys('n');
+    e.keys('z');
+    expect(e.mode).toBe('visual');
+    expect(e.row).toBe(1);
+  });
+});
+
+describe('gs surround action order (live-selection hazard)', () => {
+  it('emits collapseSelection BEFORE the delimiter inserts', () => {
+    // gs skips deleteRange (chip preservation), so nothing else consumes the
+    // live native selection — without a leading collapseSelection the first
+    // insertText's relative moveCaret RESIZES the selection instead of
+    // moving the caret, and both delimiters land at the selection start
+    // ('()abc' instead of '(abc)'; observed live 2026-07-10). The Harness
+    // can't catch this (its moveCaret is not selection-sensitive), so pin
+    // the raw action sequence.
+    let state = initialState(); // starts in insert mode, like the live plugin
+    const snap = { text: 'abc', caret: 0 };
+    for (const k of ['Escape', 'v', 'l', 'l', 'g', 's']) {
+      state = handleKey(state, k, snap).state;
+    }
+    const { actions } = handleKey(state, '9', snap);
+    const kinds = actions.map((a) => a.t);
+    expect(kinds.indexOf('collapseSelection')).toBeGreaterThanOrEqual(0);
+    expect(kinds.indexOf('collapseSelection')).toBeLessThan(kinds.indexOf('insertText'));
+  });
+});
+
+describe('gs surround stays charwise-only', () => {
+  it('visual-line g then s cancels the chord without touching the text', () => {
+    const e = h(['abc', 'def']);
+    e.keys('vv');
+    expect(e.mode).toBe('visual-line');
+    e.keys('gs');
+    expect(e.mode).toBe('visual-line');
+    e.keys('q'); // would be the '"' delimiter if surround were pending
+    expect(e.lines).toEqual(['abc', 'def']);
   });
 });
