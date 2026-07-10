@@ -776,6 +776,32 @@ exactly `SCROLL_STEP` per press → Escape and ✕ both close it → main editor
 `dbgCount`/mode never move during any of this. `npm run check-types` clean.
 No unit tests added (pure DOM/widget behavior — nothing to assert against
 `Harness`, consistent with repo testing philosophy for this class of change).
+### 2026-07-10 — Visual-mode case toggle (` / ~): charwise ships, visual-line skipped
+
+On branch `feature/visual-case-toggle` (one of 7 concurrent feature
+branches, not yet merged to main). `` ` ``/`~` now also work in charwise
+visual mode: select text with `v`, press `` ` `` (or `~` — same shift-blind
+symbol per CLAUDE.md), every letter in the selection flips case, and it
+returns to normal mode with the cursor at the selection start. Ported
+straight from normal-mode `~` (`engine.ts`'s `handleVisual`, next to the
+`d`/`c`/`y`/`p` cases): `deleteRange` (keepLead) + `insertText` with the
+case-flipped slice, then an explicit `setCaret` back to `range.start`
+(insertText alone leaves the caret after the same-length toggled text).
+Deliberately does **not** yank — real vim's visual `~` never touches a
+register, so `state.register` is left alone (unlike `d`/`c`/`y` which all
+call `withCharRegister`). Kept the `ATOMIC_CH` guard from the normal-mode
+sibling (a selection containing a rich-text chip would otherwise get
+silently destroyed by delete+reinsert, since `insertText`/`sanitizeInsert`
+strips the placeholder) — on a hit it still exits to normal mode, matching
+every other visual command's behavior, just without editing the text.
+Visual-LINE `` ` `` was considered and **skipped**: toggling every bullet in
+a multi-Rem selection would need a brand-new `Action` (there's no existing
+way to read/write text on Rems other than the focused line — the line-wise
+ops like `indentSelection`/`deleteRemSelection` are opaque SDK calls, not
+per-character text edits), so it's not the "trivial to add" case the task
+allowed for. 6 new tests in `tests/engine.test.ts` (mixed/lower/upper-case
+selections, non-letter passthrough, no-yank check, chip refusal);
+`check-types` clean, full suite 367/367 green.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1836,8 +1862,12 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Dot-repeat `.`** — repeats the last completed normal-mode change (`dw`,
   `3x`, `r<c>`, `p`, `gj`, `C-a`…). Changes that enter insert mode (`cw`,
   `o`) are NOT recorded — inserted text never reaches the engine.
-- **Charwise visual** — `v` + `h/l/w/b/e/f/gl/gh` to shape; `d x c s y p o`;
-  `gg/ge/G` escalate to line-wise to the doc boundary.
+- **Charwise visual** — `v` + `h/l/w/b/e/f/gl/gh` to shape; `d x c s y p o`,
+  backtick=`~` (toggle case of the whole selection, no yank, cursor lands at
+  the selection start — vim semantics); `gg/ge/G` escalate to line-wise to
+  the doc boundary. Visual-line has no case-toggle binding (would need a new
+  multi-Rem-text `Action`, not just an engine change — skipped as out of
+  scope for a "select some text" ask).
 - **Visual-line (multi-bullet)** — extend with `j/k`/counts/`gg/ge`; `d`/`x`
   cut, `y` yank, `p` paste, `.`/`,` indent/outdent; `;` or `/` opens the
   command line over the selection; registers carry whole subtrees; caret
