@@ -283,6 +283,7 @@ function VimHelp() {
             <Row keys={['/']} desc="RemNote's own slash menu (not vim)" />
             <Row keys={[':help']} desc="this window" />
             <Row keys={[':e name']} desc="search + open a page" />
+            <Row keys={[':10']} desc="jump to the 10th bullet from the top" />
             <Row keys={[':s/a/b/']} desc="replace a→b (flags: g all, i case, a doc)" />
             <Row keys={[':vs', ':sp']} desc="split pane right / below (opt. + name)" />
             <Row keys={[':q', ':only']} desc="close pane / keep only this pane" />

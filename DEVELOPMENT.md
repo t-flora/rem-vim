@@ -856,6 +856,28 @@ Tests: 12 new cases in `tests/engine.test.ts` (`gs` entry, every delimiter,
 unmapped-key cancel, empty-selection no-op, atomic-chip preservation, a stray
 count digit mid-chord). `npm run check-types && npm test` green. `;help`
 sheet and this file's §0.5 updated.
+### 2026-07-10 — `:N` goto-line Ex command added (feature/goto-line branch)
+
+Added vim's `:N` (e.g. `:10`) — jump to the Nth bullet from the top of the
+document (this codebase's "line" = one Rem, per the existing convention).
+Matched as a bare-digit regex in `runEx` before the verb switch, same spot as
+the `:s`/`:g` regex checks (a lone number isn't `verb arg`-shaped). New
+`gotoLine(n)` helper in `adapter.ts`: walks to the document start the same
+way `goDoc`'s `'start'` case does (repeated `moveCaretVertical(-1)` until
+focus stops changing, capped at 200 hops), then hops `moveCaretVertical(1)`
+exactly `n-1` more times — checking focus after **every** hop on this leg
+(no batching), because unlike a true boundary walk, an unchecked hop here is
+only harmless once the real last line is reached; short of that it lands on
+the wrong interior line. `n <= 1` clamps to line 1 (vim has no line 0). Calls
+`recordJump()` first, same as `gg`/`G`/`:e` — `Ctrl-O`-able. No engine
+changes: `:N` rides the existing `runEx` leaf action, which already
+invalidates the model (dirty) for every Ex command.
+`npm run check-types` and `npm test` (360/360) pass; no dedicated adapter
+test added (consistent with `goDoc`/`gg`/`G`, which also have none — this is
+SDK-dependent live behavior). No running RemNote instance was available in
+this environment, so this round has **not** been live-verified — do that
+before trusting it fully; §9's live-testing checklist applies. `:help` and
+§0.5 updated.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1954,7 +1976,9 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   sheet (grabs real DOM focus on open — its own floating-widget iframe, not
   the main editor's — so `j`/`k`/`↓`/`↑` scroll it via a plain `onKeyDown`,
   no `stealKeys`; Escape/✕/click-outside all close it); `:e <name>`
-  search+open (a jump); `:w` acknowledged (autosave);
+  search+open (a jump); `:N` (e.g. `:10`) jump to the Nth bullet from the
+  top (a jump; clamps to the last line if the doc is shorter, matching
+  vim's `:999`-past-EOF); `:w` acknowledged (autosave);
   `:s/pat/repl/[gia]` substitute (visual selection or focused bullet as
   range, `a` = whole doc — but note the shift-blind typeable-regex subset,
   §9); `:vsplit`/`:split`/`:q`/`:only` pane management (undocumented
