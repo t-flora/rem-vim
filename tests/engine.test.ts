@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ATOMIC_CH } from '../src/engine/motions';
 import { Harness } from './harness';
-import { ATOMIC_CH } from '../src/engine/motions';
 
 const h = (lines: string[] | string, row = 0, caret = 0) =>
   new Harness(typeof lines === 'string' ? [lines] : lines, row, caret);
