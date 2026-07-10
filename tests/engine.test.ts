@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ATOMIC_CH } from '../src/engine/motions';
 import { Harness } from './harness';
 
 const h = (lines: string[] | string, row = 0, caret = 0) =>
@@ -488,6 +489,88 @@ describe('visual mode (charwise, plain v)', () => {
     expect(e2.vSelRows).toEqual([1, 3]);
     e2.keys('d');
     expect(e2.lines).toEqual(['a']);
+  });
+});
+
+describe('gs (visual surround)', () => {
+  it('a bare g still opens the ordinary g-chord (other g-chords unaffected by adding gs)', () => {
+    const e = h('hello', 0, 1);
+    e.keys('vgld'); // gl = $ (end of line), unrelated to the new gs chord
+    expect(e.line).toBe('h');
+  });
+
+  it("gs' wraps the selection in single quotes and returns to normal on the open delimiter", () => {
+    const e = h('foo bar');
+    e.keys("vllgs'");
+    expect(e.line).toBe("'foo' bar");
+    expect(e.mode).toBe('normal');
+    expect(e.caret).toBe(0); // caret lands on the opening delimiter
+  });
+
+  it('gs` wraps in backticks (literal, directly typeable)', () => {
+    const e = h('foo bar');
+    e.keys('vllgs`');
+    expect(e.line).toBe('`foo` bar');
+  });
+
+  it('gs[ and gs] both wrap in square brackets', () => {
+    const e1 = h('foo bar');
+    e1.keys('vllgs[');
+    expect(e1.line).toBe('[foo] bar');
+
+    const e2 = h('foo bar');
+    e2.keys('vllgs]');
+    expect(e2.line).toBe('[foo] bar');
+  });
+
+  it('gsq wraps in double quotes (mnemonic: " itself is unreachable, shift-blind)', () => {
+    const e = h('foo bar');
+    e.keys('vllgsq');
+    expect(e.line).toBe('"foo" bar');
+  });
+
+  it('gs8 wraps in asterisks (8 is the unshifted sibling of * on the same key)', () => {
+    const e = h('foo bar');
+    e.keys('vllgs8');
+    expect(e.line).toBe('*foo* bar');
+  });
+
+  it('gs9 and gs0 both wrap in parens (unshifted siblings of ( and ))', () => {
+    const e1 = h('foo bar');
+    e1.keys('vllgs9');
+    expect(e1.line).toBe('(foo) bar');
+
+    const e2 = h('foo bar');
+    e2.keys('vllgs0');
+    expect(e2.line).toBe('(foo) bar');
+  });
+
+  it('an unmapped delimiter key cancels the pending surround with no change', () => {
+    const e = h('foo bar');
+    e.keys('vllgsz'); // 'z' is not in SURROUND_PAIRS
+    expect(e.line).toBe('foo bar');
+    expect(e.mode).toBe('visual'); // selection survives, just like an invalid find/textobj key
+  });
+
+  it('empty selection (empty bullet) is a no-op that still leaves visual mode', () => {
+    const e = h('');
+    e.keys("vgs'");
+    expect(e.line).toBe('');
+    expect(e.mode).toBe('normal');
+  });
+
+  it('wrapping a selection containing an atomic rich-text chip is allowed (only inserts around it, never rewrites it)', () => {
+    const CHIP = ATOMIC_CH;
+    const e = h(`see ${CHIP} end`, 0, 0);
+    // select "see <chip>" (5 caret stops: s,e,e,' ',chip)
+    e.keys('vllllgs\'');
+    expect(e.line).toBe(`'see ${CHIP}' end`);
+  });
+
+  it('count prefix before gs is ignored (surround acts on the existing selection, not a repeat count)', () => {
+    const e = h('foo bar');
+    e.keys("vll2gs'"); // count digit arrives mid-chord; surround still wraps once
+    expect(e.line).toBe("'foo' bar");
   });
 });
 

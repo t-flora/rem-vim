@@ -116,7 +116,12 @@ export type Pending =
   /** `m` pressed; waiting for the mark name. */
   | { p: 'mark' }
   /** `'` pressed; waiting for the mark name to jump to. */
-  | { p: 'gotoMark' };
+  | { p: 'gotoMark' }
+  /**
+   * Visual mode `gs` pressed; waiting for the delimiter selector key (see
+   * `SURROUND_PAIRS` in engine.ts). Charwise visual only.
+   */
+  | { p: 'surround' };
 
 export interface VimState {
   mode: Mode;

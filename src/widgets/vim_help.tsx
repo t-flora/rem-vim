@@ -210,7 +210,17 @@ function VimHelp() {
             <Row keys={['.']} desc="indent selected bullets  (vim: >)" />
             <Row keys={[',']} desc="outdent them  (vim: <)" />
             <Row keys={[';']} desc="run a command on the selection ↓" />
+            <Row keys={['g', 's', '·']} desc="wrap selection in a delimiter ↓" />
             <Row keys={['Esc']} desc="cancel selection" />
+          </Section>
+
+          <Section title="Wrap selection (gs)">
+            <Row keys={['g', 's', "'"]} desc={"wrap in ' … '"} />
+            <Row keys={['g', 's', '`']} desc="wrap in ` … `" />
+            <Row keys={['g', 's', '[']} desc="wrap in [ … ]  (] also works)" />
+            <Row keys={['g', 's', 'q']} desc={'wrap in " … "  (q = quote)'} />
+            <Row keys={['g', 's', '8']} desc="wrap in * … *  (8 = shift of *)" />
+            <Row keys={['g', 's', '9']} desc="wrap in ( … )  (0 also works)" />
           </Section>
 
           <Section title="Command line">
