@@ -878,6 +878,66 @@ SDK-dependent live behavior). No running RemNote instance was available in
 this environment, so this round has **not** been live-verified — do that
 before trusting it fully; §9's live-testing checklist applies. `:help` and
 §0.5 updated.
+### 2026-07-10 — Pane cycling / "tabs" (`gt`/`gp`/`gn`/`gc`/`gm`) on branch `feature/pane-tabs`
+
+**Context:** user asked for vim-tab-style bindings. RemNote has no tab data
+structure, only split PANES (a tree via `getCurrentWindowTree`/
+`setRemWindowTree`, plus `getOpenPaneIds`/`getFocusedPaneId`/
+`setFocusedPaneId`) — already backing the shipped `:vs`/`:sp`/`:q`/`:only`
+(§0.5). Two pieces of the original ask didn't survive contact with the
+codebase (resolved with the user beforehand, not re-litigated here): `ggt`
+for "previous tab" is unusable (`gg` already fires immediately on the second
+`g`); bare `tc`/`tn`/`tm=`/`tm-` collide with `t` already being the
+till-forward-find prefix (`pending.p==='find'`). Final scheme — all
+normal-mode-only g-chords, the same unshifted-synonym mechanism as
+`gl`/`gh`/`go`/`ga`/`gj`/`gd`/`gu`:
+
+- **`gt` / `gp`** — next / previous pane (vim tab-next/prev mnemonic).
+  Deliberately reuse the EXISTING `focusPane` Action (the one `Ctrl-W h/l`
+  and the direct `Ctrl-H`/`Ctrl-L` bindings already emit) instead of adding a
+  duplicate Action — `gt`/`gp` cycle panes with the exact same wraparound
+  semantics, just reachable without the Ctrl-W chord (which never arrives on
+  the desktop Electron app; §9). No new adapter exec case needed for these
+  two.
+- **`gn`** — new pane: emits `{ t: 'runEx', cmd: 'vs' }`, i.e. literally the
+  same code path `:vs` (no arg) already takes — vertical split of the
+  current doc, focus follows. Zero new adapter code.
+- **`gc`** — close pane: emits `{ t: 'runEx', cmd: 'q' }`, same path as `:q`.
+- **`gm` then `h`/`l`** — move the focused pane left/right within the SAME
+  flat cycle order `gt`/`gp` walk (`getOpenPaneIds()`'s order; panes are
+  really a tree, so this is "earlier/later in that flat order," not literal
+  tree geometry). New `movePane` Action, implemented via the EXISTING
+  `paneLeaves()`/`setPaneTree()` helpers `:vs`/`:sp`/`:q` already use (swap
+  two entries in the leaf list, rebuild flat, re-focus the moved pane) —
+  reusing that machinery kept the risk low enough that this was **implemented,
+  not skipped** as the bonus-piece fallback allowed. Same documented
+  trade-off as `:vs`/`:sp`/`:q`: a hand-arranged 3+ pane layout gets rebuilt
+  flat along `'row'`, so nesting/ratios aren't preserved.
+- Extracted the wraparound-index math shared by `focusPane` and `movePane`
+  into two pure helpers in `pure.ts`: `wrapIndex(len, idx, dir)` and
+  `cyclePaneId(ids, currentId, dir)` (built on `wrapIndex`) — `focusPane`'s
+  exec case was refactored to call `cyclePaneId` instead of the inline
+  modulo math it had before.
+
+Letters chosen after re-grepping the live `pending.p==='g'` switch in
+`engine.ts` right before implementing: `g e l h o a j d u` were already
+taken; `f`/`s` are reserved for sibling branches (`feature/gf-backward-find`,
+`feature/visual-surround`); `t`/`p` were reserved for this branch by the
+user up front. `n`/`c`/`m` were free and picked for mnemonic fit
+(new/close/move).
+
+Tests: `wrapIndex`/`cyclePaneId` unit-tested in `adapter-pure.test.ts`
+(wraparound both directions, <2-pane no-op, unrecognized id fallback);
+`gt`/`gp`/`gn`/`gc`/`gm` action-emission tested in `engine.test.ts`,
+including that `gm`+non-h/l cancels cleanly and none of these are
+dot-repeatable — matching the existing test bar for `:vs`/`:sp`/`:q` (which
+are also only tested at the `runEx` cmd-string level, since the actual SDK
+pane RPCs aren't meaningfully unit-testable). **Not live-verified** — no
+running RemNote instance in this environment; flag for a live/e2e pass
+before merge, `movePane`'s `setRemWindowTree` rebuild especially (same class
+of risk `:vs`/`:sp`/`:q` already carry, per §9's `positionAmongstSiblings`
+race note). `npm run check-types`, `npm test` (378/378), and `npm run build`
+all green.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1968,7 +2028,12 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   truncate-forward semantics).
 - **Panes** — `Ctrl-H`/`Ctrl-L` focus previous/next pane (the vim-classic
   `C-w h`/`C-w l` chord is also bound but a real Ctrl+W never reaches the
-  desktop app — Electron eats it; see §9).
+  desktop app — Electron eats it; see §9). `gt`/`gp` do the same next/prev
+  cycling as unshifted g-chords (tab-next/prev mnemonic, branch
+  `feature/pane-tabs`, not yet live-verified); `gn` new pane (`:vs`'s path),
+  `gc` close pane (`:q`'s path), `gm` then `h`/`l` move the focused pane
+  left/right in that same cycle order (best-effort — rebuilds the pane tree
+  flat, same tradeoff as `:vs`/`:sp`/`:q` below).
 - **Scrolling** — `Ctrl-D`/`Ctrl-U` (caret page-moves; view follows).
   `Ctrl-E`/`Ctrl-Y` deliberately unbound — no view-scroll API exists.
 - **Command line** — opened with `;` only (`/` now belongs to RemNote's own

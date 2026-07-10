@@ -6,6 +6,7 @@ import type { VimState } from '../src/engine/types';
 import {
   classifyStrayEdit,
   computeJumpStep,
+  cyclePaneId,
   decideRedo,
   decideUndo,
   diffCaret,
@@ -21,6 +22,7 @@ import {
   walkToBoundary,
   walkToRoot,
   walkToTarget,
+  wrapIndex,
 } from '../src/adapter/pure';
 
 // The adapter's pure data math: the rich-text → model-space flatten (the
@@ -173,6 +175,52 @@ describe('diffCaret (insert-exit caret inference)', () => {
     const caret = diffCaret('aa', 'aaa', 1);
     expect(caret).toBeGreaterThanOrEqual(0);
     expect(caret).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('wrapIndex (flat-order wraparound, gt/gp/gm)', () => {
+  it('steps forward and backward within bounds', () => {
+    expect(wrapIndex(3, 0, 1)).toBe(1);
+    expect(wrapIndex(3, 1, 1)).toBe(2);
+    expect(wrapIndex(3, 1, -1)).toBe(0);
+  });
+
+  it('wraps past the last index back to 0', () => {
+    expect(wrapIndex(3, 2, 1)).toBe(0);
+  });
+
+  it('wraps before 0 back to the last index', () => {
+    expect(wrapIndex(3, 0, -1)).toBe(2);
+  });
+
+  it('a 2-pane layout just toggles', () => {
+    expect(wrapIndex(2, 0, 1)).toBe(1);
+    expect(wrapIndex(2, 1, 1)).toBe(0);
+  });
+
+  it('len 0 returns idx unchanged (nothing to wrap into)', () => {
+    expect(wrapIndex(0, 0, 1)).toBe(0);
+  });
+});
+
+describe('cyclePaneId (next/previous pane id, gt/gp)', () => {
+  it('returns the next id with wraparound', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'a', 1)).toBe('b');
+    expect(cyclePaneId(['a', 'b', 'c'], 'c', 1)).toBe('a');
+  });
+
+  it('returns the previous id with wraparound', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'a', -1)).toBe('c');
+    expect(cyclePaneId(['a', 'b', 'c'], 'b', -1)).toBe('a');
+  });
+
+  it('a single pane has nothing to cycle to', () => {
+    expect(cyclePaneId(['a'], 'a', 1)).toBeUndefined();
+    expect(cyclePaneId([], 'a', 1)).toBeUndefined();
+  });
+
+  it('an unrecognized current id falls back to index 0 instead of throwing', () => {
+    expect(cyclePaneId(['a', 'b', 'c'], 'not-a-real-id', 1)).toBe('b');
   });
 });
 
