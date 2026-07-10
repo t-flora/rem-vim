@@ -10,7 +10,7 @@ import { stopsBetween } from '../engine/motions';
 import { Action, Mode, Snapshot, VimState } from '../engine/types';
 import { hostDocument, readDomCaret, setDomCaret } from './domCaret';
 import { bindingsForMode, SPEC_TO_SYM } from './keymap';
-import { diffCaret, flattenRich, sanitizeInsert, settleRead } from './pure';
+import { cyclePaneId, diffCaret, flattenRich, sanitizeInsert, settleRead, wrapIndex } from './pure';
 
 export { diffCaret } from './pure';
 
@@ -371,6 +371,7 @@ export class VimAdapter {
       case 'jump': // the caret lands in a different rem
       case 'gotoMark': // ditto
       case 'focusPane':
+      case 'movePane': // rebuilds the pane tree; setPaneTree also re-focuses
       case 'vExtend': // the selection head physically moves the caret
       case 'yankRemSelection': // native copy parks the caret on the first line
         this.invalidateModel();
@@ -610,12 +611,27 @@ export class VimAdapter {
 
       case 'focusPane': {
         const panes = await this.plugin.window.getOpenPaneIds();
-        if (panes.length < 2) break;
         const cur = await this.plugin.window.getFocusedPaneId();
-        const idx = Math.max(0, panes.indexOf(cur));
-        const next = panes[(idx + a.dir + panes.length) % panes.length];
+        const next = cyclePaneId(panes, cur, a.dir);
+        if (!next) break;
         await this.plugin.window.setFocusedPaneId(next);
         this.invalidateModel();
+        break;
+      }
+
+      // `gm` then h/l — swap the focused pane with its flat-order neighbor.
+      // Reuses the exact leaf-list + rebuild machinery `:vs`/`:sp`/`:q`
+      // already use (`paneLeaves`/`setPaneTree`), so the same documented
+      // tradeoff applies: a hand-arranged 3+ pane layout is rebuilt flat
+      // along 'row', not preserved nested/ratioed.
+      case 'movePane': {
+        const { docs, focusedIdx } = await this.paneLeaves();
+        if (docs.length < 2 || docs.some((d) => !d)) break;
+        const otherIdx = wrapIndex(docs.length, focusedIdx, a.dir);
+        if (otherIdx === focusedIdx) break;
+        const leaves = [...(docs as string[])];
+        [leaves[focusedIdx], leaves[otherIdx]] = [leaves[otherIdx], leaves[focusedIdx]];
+        await this.setPaneTree(leaves, 'row', otherIdx);
         break;
       }
 

@@ -69,6 +69,32 @@ export function diffCaret(pre: string, fresh: string, fallback: number): number 
   return clamp(fresh.length - s, 0, fresh.length);
 }
 
+/**
+ * Wrap `idx` by `dir` steps within `[0, len)`, vim tab-cycle style: past the
+ * last index comes back to 0, before 0 comes back to the last. Shared by
+ * pane-cycling (`gt`/`gp`, Ctrl-W h/l) and move-pane (`gm` h/l), which both
+ * need "the next/previous slot in a flat, wraparound order" and differ only
+ * in what they do with the resulting index. Returns `idx` unchanged when
+ * `len` is 0 (nothing to wrap into).
+ */
+export function wrapIndex(len: number, idx: number, dir: -1 | 1): number {
+  if (len <= 0) return idx;
+  return (idx + dir + len) % len;
+}
+
+/**
+ * The pane id `dir` steps away from `currentId` in `ids` (RemNote's flat
+ * `getOpenPaneIds()` order), wrapping around at the ends. `undefined` when
+ * there's nothing to cycle to (fewer than 2 panes). `currentId` not being
+ * found in `ids` (shouldn't happen live) falls back to index 0 rather than
+ * throwing.
+ */
+export function cyclePaneId(ids: string[], currentId: string, dir: -1 | 1): string | undefined {
+  if (ids.length < 2) return undefined;
+  const idx = Math.max(0, ids.indexOf(currentId));
+  return ids[wrapIndex(ids.length, idx, dir)];
+}
+
 export interface SettleOpts {
   /** Extra confirmation reads after the first (default 3). */
   rounds?: number;
