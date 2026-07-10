@@ -2516,13 +2516,21 @@ export class VimAdapter {
    * EditorTextEdited (leaked keys typing into the document) — so they
    * re-assert the current steal set, throttled. Re-stealing is idempotent
    * (verified live: keys arrive exactly once).
+   *
+   * MUST run on the key queue: an off-queue re-steal races applyMode's
+   * insert-mode release (observed live: `o` focuses the new bullet →
+   * FocusedRemChange → a full-set steal snapshotted BEFORE
+   * applyMode('insert') lands re-steals every letter mid-typing and the
+   * typed text vanishes into the engine).
    */
-  private async reassertSteals() {
-    if (!this.enabled || this.stolenSpecs.size === 0) return;
+  private reassertSteals() {
     const now = Date.now();
-    if (now - this.lastStealAssert < 1500) return;
+    if (!this.enabled || now - this.lastStealAssert < 1500) return;
     this.lastStealAssert = now;
-    await this.plugin.app.stealKeys([...this.stolenSpecs]);
+    this.enqueueTask(async () => {
+      if (!this.enabled || this.stolenSpecs.size === 0) return;
+      await this.plugin.app.stealKeys([...this.stolenSpecs]);
+    });
   }
 
   /**
