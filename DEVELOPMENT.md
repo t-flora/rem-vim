@@ -811,6 +811,51 @@ key stealing), reusing the existing `find`-pending continuation so
 charwise visual (`vgf<char>`). `T`/backward-till stays out of scope (not
 requested). 4 new unit tests added; `:help` and §0.5 updated. Branch:
 `feature/gf-backward-find`.
+### 2026-07-10 — `gs<delim>` visual surround, on branch `feature/visual-surround`
+
+New charwise-visual command: select text, `gs` then a delimiter key wraps the
+selection in a paired delimiter and drops back to normal mode with the caret
+on the opening delimiter (`foo` selected, `gs'` → `'foo'`). Implemented as a
+new `pending: { p: 'surround' }` engine state, the same shape as the existing
+`find`/`textobj` pending sub-states — `g` then `s` (a new case in the visual
+`g`-chord dispatch) arms it, the next key is read as the delimiter selector
+against a `SURROUND_PAIRS` table and consumed unconditionally. No new
+`Action` variants: the wrap composes out of two `insertText`s (open, close)
+plus a `setCaret`, all pre-existing.
+
+**Delimiter table** (full doc comment on `SURROUND_PAIRS` in engine.ts):
+`'`→`'…'` and `` ` ``→`` `…` `` and `[`/`]`→`[…]` are literal, directly-typeable
+keys; `q`→`"…"` (mnemonic — `"` is shift+`'`, unreachable, see §9
+shift-blindness), `8`→`*…*` (unshifted sibling of `*`=shift+8, same physical
+key), `9`/`0`→`(…)` (unshifted siblings of `(`/`)`=shift+9/shift+0). Curly
+braces intentionally left unmapped — no unshifted-sibling digit to piggyback
+on the way parens got one, and no free letter in visual mode's dispatch read
+as an obvious curly mnemonic; skipped rather than picked arbitrarily.
+
+**Deviation from the drafted skeleton, worth flagging:** the first pass
+followed the obvious "delete the range, insert `open+slice+close`" pattern
+(mirroring `~`/`r`) — this FAILED a new atomic-chip test: `insertText`'s
+payload always runs through `sanitizeInsert`, which strips `ATOMIC_CH`, so
+round-tripping the selection's own text through it silently ate any
+rem-reference/image/LaTeX chip inside the selection. Fixed by never touching
+the selection at all: insert the close delimiter at `range.end`, then the
+open delimiter at `range.start` (close first, so the second insert's offset
+isn't shifted by the first) — nothing inside the selection ever passes
+through `insertText`, so chips and rich formatting now survive a `gs` wrap
+intact. This is actually strictly better than the charwise-register chip
+limitation noted below (`p`/`dw` do lose chips; `gs` doesn't), and confirmed
+correct against the real adapter's `insertAt`/model-tracking too, not just
+the harness — see `updateModel`'s `insertText` case in adapter.ts, which
+keeps `this.model` accurate between the two sequential inserts of one key.
+Skipped visual-LINE support: wrapping "each selected bullet" would need to
+mutate multiple Rems, which the engine's single-line `Snapshot` can't express
+without a new multi-Rem `Action` — out of scope for what was asked (charwise
+only), and would have violated the "no new Action types" constraint anyway.
+
+Tests: 12 new cases in `tests/engine.test.ts` (`gs` entry, every delimiter,
+unmapped-key cancel, empty-selection no-op, atomic-chip preservation, a stray
+count digit mid-chord). `npm run check-types && npm test` green. `;help`
+sheet and this file's §0.5 updated.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1878,7 +1923,13 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   the selection start — vim semantics); `gg/ge/G` escalate to line-wise to
   the doc boundary. Visual-line has no case-toggle binding (would need a new
   multi-Rem-text `Action`, not just an engine change — skipped as out of
-  scope for a "select some text" ask).
+  scope for a "select some text" ask). `gs<delim>` wraps the selection in a
+  paired delimiter and returns to normal on the opening delimiter —
+  `'`/`` ` ``/`[`/`]` literal, `q`=`"` `8`=`*` `9`/`0`=`(`/`)` mnemonic
+  (shift-blind stand-ins; full table in engine.ts's `SURROUND_PAIRS` doc
+  comment). Unlike charwise deletes/pastes, `gs` never round-trips the
+  selection's own text through `insertText`, so it's safe across a
+  rem-reference/image/LaTeX chip (see the known-limitations note below).
 - **Visual-line (multi-bullet)** — extend with `j/k`/counts/`gg/ge`; `d`/`x`
   cut, `y` yank, `p` paste, `.`/`,` indent/outdent; `;` or `/` opens the
   command line over the selection; registers carry whole subtrees; caret
@@ -1932,7 +1983,10 @@ Known limitations (beyond §9 platform blockers):
   image/LaTeX chip deletes it correctly (and the native clipboard keeps full
   fidelity), but `p` pastes the text minus the chip — a chip can't be
   recreated from plain text. Whole-line registers (`dd`/`yy`/visual-line)
-  keep full rich fidelity. `r`/`~` refuse ranges containing a chip.
+  keep full rich fidelity. `r`/`~` refuse ranges containing a chip. `gs`
+  (visual surround) is the exception: it only inserts delimiters around the
+  selection rather than reinserting the selection itself, so a chip inside a
+  `gs`-wrapped range survives untouched.
 - Charwise visual uses a real native text selection, so RemNote's floating
   formatting toolbar pops up over it (harmless; keys keep working).
 - Capitals act as their lowercase key (shift-blind stealing); use synonyms.

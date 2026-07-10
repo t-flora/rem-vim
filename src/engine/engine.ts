@@ -719,6 +719,41 @@ function visualRange(state: VimState, snap: Snapshot): { start: number; end: num
   return { start: lo, end: clamp(hi + cpWidthAt(snap.text, hi), 0, Math.max(n, lo)) };
 }
 
+/**
+ * `gs<key>`: visual-mode charwise surround. Delimiter selector -> [open,
+ * close]. Several shifted delimiters RemNote's shift-blind key stealing can
+ * never report on their own (`"`, `*`, `(`, `)`, `{`, `}` — see keymap.ts's
+ * doc comment) are reached the same way `~` is reached via backtick: an
+ * unshifted stand-in, either the literal unshifted key (`'`/`` ` ``/`[`/`]`)
+ * or the physical unshifted sibling of the shifted symbol on a US layout
+ * (`8` for `*`, `9`/`0` for the `(`/`)` pair — the same "same physical key"
+ * logic as `8`→`*`, applied twice). `q` ("quote") is a free mnemonic letter
+ * standing in for the otherwise-unreachable `"`.
+ *
+ *   '   ->  '…'    literal, directly typeable
+ *   `   ->  `…`    literal, directly typeable
+ *   [ ] ->  […]    literal, either bracket key wraps the same pair
+ *   q   ->  "…"    mnemonic ("quote"); `"` is shift+' and unreachable
+ *   8   ->  *…*    unshifted sibling of `*` (shift+8), same physical key
+ *   9 0 ->  (…)    unshifted siblings of `(`/`)` (shift+9 / shift+0)
+ *
+ * Curly braces (`{`/`}`) are deliberately NOT mapped: unlike `(`/`)` there's
+ * no unshifted-sibling digit to piggyback on, and none of the letters still
+ * free in visual mode's dispatch (m, n, r, u, z — checked by grepping
+ * `case '` across handleVisual/motionFor) reads as an obvious curly/brace
+ * mnemonic. Left out rather than picked arbitrarily.
+ */
+const SURROUND_PAIRS: Record<string, [string, string]> = {
+  "'": ["'", "'"],
+  '`': ['`', '`'],
+  '[': ['[', ']'],
+  ']': ['[', ']'],
+  q: ['"', '"'],
+  '8': ['*', '*'],
+  '9': ['(', ')'],
+  '0': ['(', ')'],
+};
+
 function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResult {
   const { text } = snap;
   const n = text.length;
@@ -731,9 +766,43 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
     ]);
   }
 
+  // gs<delimiter>: consumes the very next key as the delimiter selector.
+  // Checked ahead of digit-accumulation/g-dispatch/mode-toggle below so ANY
+  // next key — including digits (`8`, `9`, `0` from the table above) and
+  // letters that would otherwise start a different chord — is read as the
+  // delimiter, never reinterpreted as a count or another command.
+  if (state.pending.p === 'surround') {
+    const cancel: VimState = { ...state, pending: { p: 'none' }, count: '' };
+    const pair = key.length === 1 ? SURROUND_PAIRS[key] : undefined;
+    if (!pair) return { state: cancel, actions: [] };
+    const range = visualRange(state, snap);
+    if (range.start >= range.end) {
+      // Empty selection (only possible on an empty bullet) — no-op, just
+      // leave visual mode like the other visual commands do on a no-op.
+      return toMode(cancel, 'normal', [{ t: 'setCaret', at: range.start }]);
+    }
+    // Deliberately NOT delete-then-reinsert-the-slice (unlike ~/r, or the
+    // skeleton this was first drafted from): insertText runs every payload
+    // through the adapter's sanitizeInsert, which strips ATOMIC_CH — so
+    // round-tripping the selection's own text through it would silently
+    // destroy any rem-reference/image/LaTeX chip inside the selection (the
+    // same lossy path `cw`/register-paste already accept for charwise
+    // edits). Instead we insert ONLY the two plain-ASCII delimiter chars,
+    // around the untouched selection, so nothing inside it ever passes
+    // through insertText — chips and any rich formatting survive intact.
+    // Close first: inserting after the selection doesn't shift `range.start`,
+    // so the second insert's offset is still valid on the mutated line.
+    return toMode(cancel, 'normal', [
+      { t: 'insertText', at: range.end, text: pair[1] },
+      { t: 'insertText', at: range.start, text: pair[0] },
+      { t: 'setCaret', at: range.start },
+    ]);
+  }
+
   // g-chords: gg/ge escalate to a line-wise selection reaching the document
   // boundary (vim v gg / v G); gl/gh stay charwise, extending the selection
-  // to the line end / first non-blank ($ / ^ synonyms).
+  // to the line end / first non-blank ($ / ^ synonyms); gs starts the
+  // surround-pending state above.
   if (state.pending.p === 'g') {
     const st: VimState = { ...state, pending: { p: 'none' }, count: '' };
     if (key === 'g' || key === 'e') {
@@ -751,6 +820,9 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
     // Hand off to the same find-prefix pending state `vf` uses below.
     if (key === 'f') {
       return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
+    }
+    if (key === 's') {
+      return { state: { ...st, pending: { p: 'surround' } }, actions: [] };
     }
     return { state: st, actions: [] };
   }
