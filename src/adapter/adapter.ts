@@ -2476,9 +2476,15 @@ export class VimAdapter {
 
   private async applyMode(mode: Mode) {
     const wanted = new Set(effectiveSpecs(mode, this.mapConfig));
-    const toSteal = [...wanted].filter((s) => !this.stolenSpecs.has(s));
     const toRelease = [...this.stolenSpecs].filter((s) => !wanted.has(s));
-    if (toSteal.length) await this.plugin.app.stealKeys(toSteal);
+    // Steal the FULL wanted set, not the stolen-vs-wanted delta. RemNote can
+    // silently drop registered steals (observed live 2026-07-10: 'escape'
+    // present in our bookkeeping yet no longer delivered — the app was stuck
+    // in insert mode until a redundant stealKeys healed it). Re-stealing an
+    // already-stolen spec is idempotent (verified live: keys still arrive
+    // exactly once), so every mode change now re-asserts reality for the
+    // same single RPC.
+    if (wanted.size) await this.plugin.app.stealKeys([...wanted]);
     if (toRelease.length) await this.plugin.app.releaseKeys(toRelease);
     this.stolenSpecs = wanted;
     // Keep in sync with syncEscapeSteal's own bookkeeping — a mode

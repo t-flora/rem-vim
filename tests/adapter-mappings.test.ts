@@ -147,6 +147,23 @@ describe('7. per-mode steal diffs across mode switches', () => {
   });
 });
 
+describe('7b. steal self-healing (full-set re-steal)', () => {
+  it('a mode change repopulates steals RemNote silently dropped', async () => {
+    const { world, adapter } = await boot({ config: ['nmap - gl'] });
+    // Simulate the observed live failure: the app forgets every steal while
+    // the adapter's bookkeeping still lists them (diff-only stealing would
+    // never re-issue and the plugin would be stuck unstolen forever).
+    world.stolen.clear();
+    await type(world, adapter, ['i']); // any mode transition
+    expect(world.stolen).toEqual(new Set(['escape']));
+    world.stolen.clear();
+    world.stealKey('escape'); // still registered adapter-side; deliver it
+    await drain(adapter);
+    expect(asAny(adapter).state.mode).toBe('normal');
+    expect(world.stolen.has('-')).toBe(true); // full normal set re-asserted
+  });
+});
+
 describe('8. toggle interplay', () => {
   it('reload while disabled updates tables but steals nothing; toggle-on applies them', async () => {
     const { world, adapter, configDoc } = await boot({ config: ['nmap <c-j> l'] });
