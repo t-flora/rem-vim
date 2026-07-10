@@ -296,6 +296,9 @@ export class VimAdapter {
     // Load the user keymap. Serialized on the key queue and not awaited:
     // keys pressed before it lands use the base bindings.
     this.enqueueTask(() => this.reloadConfig(false));
+    // Steady-state heal for GC'd steals (see reassertSteals): even with no
+    // clicks or leaked keys, a wiped registry recovers within one tick.
+    setInterval(() => void this.reassertSteals(), 5000);
   }
 
   async toggle() {
