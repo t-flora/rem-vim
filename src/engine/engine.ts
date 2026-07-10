@@ -323,6 +323,10 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     if (state.op) {
       if (key === 'l') return applyOperator(state, snap, caret, n);
       if (key === 'h') return applyOperator(state, snap, caret, firstNonBlank(text));
+      // dgf<char> = vim's dF<char> (delete backward-to-and-including char).
+      // Hand off to the same find-prefix pending state `df` uses, keeping
+      // state.op alive so the find continuation below calls applyOperator.
+      if (key === 'f') return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
       return reset(state);
     }
     // g-chords double as unshifted synonyms for capital commands, which are
@@ -336,6 +340,8 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
         return reset(state, [{ t: 'setCaret', at: n }]);
       case 'h': // gh → ^ (first non-blank)
         return reset(state, [{ t: 'setCaret', at: firstNonBlank(text) }]);
+      case 'f': // gf → F (find character backward on the line)
+        return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
       case 'o': // go → O (open bullet above)
         return toMode(state, 'insert', [{ t: 'newBullet', where: 'above' }]);
       case 'a': // ga → A (append at end of line)
@@ -740,6 +746,11 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
       const target = key === 'l' ? cpStart(text, Math.max(0, n - 1)) : firstNonBlank(text);
       const st2 = { ...st, head: clamp(target, 0, Math.max(0, n - 1)) };
       return { state: st2, actions: [selectionAction(st2, snap)] };
+    }
+    // vgf<char> = vim's vF<char> (extend the selection backward to a char).
+    // Hand off to the same find-prefix pending state `vf` uses below.
+    if (key === 'f') {
+      return { state: { ...state, pending: { p: 'find', key: 'F' } }, actions: [] };
     }
     return { state: st, actions: [] };
   }
