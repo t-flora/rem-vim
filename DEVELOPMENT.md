@@ -58,17 +58,53 @@ keybindings (:config)" is the mouse recovery path.
 **New/changed:** `src/adapter/mappings.ts` (pure: parser/expandSym/
 effectiveSpecs/specToSymTable/notation incl. `<lt>`), adapter wiring,
 `keymap.ts` untouched, widgets (palette cmd, :help row), README section.
-Tests — four layers, 536 green total: L1 `tests/mappings.test.ts` (49),
+Tests — four layers, 540 green total: L1 `tests/mappings.test.ts` (49),
 L2 `tests/mappings-harness.test.ts` (19 equivalence tests; harness now
 imports the shared tokenizer — its duplicate table is gone — and takes
-`setMappings` in `keys()` only), L3 `tests/adapter-mappings.test.ts` (18)
+`setMappings` in `keys()` only), L3 `tests/adapter-mappings.test.ts` (22)
 against **`tests/fake-plugin.ts`** — a fail-fast fake RNPlugin (editor line
 model, rem tree, steal/toast recorders) running the REAL VimAdapter under
 vitest via the new `vitest.config.ts` alias of `@remnote/plugin-sdk` to
 `tests/sdk-stub.ts` (the real bundle needs `self`; types still check
 against the real SDK). The L3 deadlock guard was mutation-verified (re-
-enqueue → 5s timeout failure). L4 live e2e: `e2e/mappings.mjs` — see next
-entry for results.
+enqueue → 5s timeout failure).
+
+**L4 live e2e results (2026-07-10, all on the e2e scratch vault):**
+`e2e/mappings.mjs` main phase 21/21 ✓ (baseline pass-through, `nmap - gl`
+motion/operator/count composition, mapped `<c-j>` ctrl chord, `:config`
+create+seed+pin+open+Ctrl-O, focus-leave auto-reload after in-doc edit,
+unmap round-trip, dot-repeat of expansions, toggle off/on, `:map`
+internals + screenshot in `e2e/shots/mappings-map.png`); `--persist`
+phase 3/3 ✓ after a full app relaunch (activation load, no :mapload);
+`--cleanup` 2/2 ✓. Regression gates with the non-overlapping gate config
+AND with no config: `run.mjs` 16/16 ✓, `motionfix.mjs` 8/8 ✓.
+`reallife.mjs`: 27/34 with 4 violations — ALL cascade from one
+pre-existing platform flake (`o` at the ~17-bullet viewport boundary lands
+as literal text, merging two bullets); a control run on MAIN failed the
+same check WORSE (two merged bullets + literal key leakage), so this is
+not a branch regression — it is the steal-loss class below, which the
+branch mitigates. Synthesized-shift note: CDP Shift+key does NOT match
+bare steal specs (mappings.mjs logs it informationally); the shift-blind
+contract is real-input behavior per §9.
+
+**PLATFORM DISCOVERY while gating (now §9): RemNote GC-wipes plugin key
+steals.** `GlobalStealKeySingleton.componentDidUpdate` (read from
+app.asar) calls `releaseAllKeys(stealerKey)` for any stealer whose
+plugin-load-state map reads `not-loaded`/`unloading`/`error` at ANY steal
+registry update — a dev-server hiccup flickers that state while the
+plugin keeps running, and every steal silently dies with the adapter's
+bookkeeping still believing. Mid-suite this stuck the app in insert mode
+(escape "stolen" but never delivered; probed live: a redundant stealKeys
+healed it instantly, keys then arrive exactly once — re-steal is
+idempotent). Three-part healing shipped: (1) `applyMode` steals the FULL
+wanted set every time (not the diff); (2) `reassertSteals()` — throttled
+1.5s, ON THE KEY QUEUE — re-asserts the current set from FocusedRemChange
+(clicks) and stray EditorTextEdited (leaked keys typing); (3) a 5s timer
+tick. The queue placement is load-bearing: an off-queue reassert
+snapshotted before `applyMode('insert')` finished re-stole every letter
+mid-insert-typing and typed text vanished (`o`-created bullets stayed
+empty — observed live, then fixed and re-verified). `e2e/tidy-daily.mjs`
+cleans crash-left empty bullets via dd keystrokes.
 
 ### 2026-07-10 — round 6b: "44 tests seems minor" — deepened coverage (85 new tests) + found and fixed one real latent bug
 
@@ -2303,6 +2339,20 @@ against RemNote 1.26.30):
 
 - **Shift is unobservable** (`keymap.ts` top comment) → no real capital-key
   bindings, ever. Use the synonym pattern (§6).
+- **RemNote silently GC-wipes a plugin's key steals.** The app's
+  `GlobalStealKeySingleton.componentDidUpdate` (read from app.asar,
+  2026-07-10) calls `releaseAllKeys(stealerKey)` whenever the stealer's
+  plugin-load-state reads `not-loaded`/`unloading`/`error` at any steal
+  registry update — a dev-server hiccup is enough to flicker that state
+  while the plugin keeps running. Every steal dies; the adapter's diff
+  bookkeeping still believes; no key ever arrives again (observed live:
+  stuck in insert, escape undeliverable). Re-stealing an already-stolen
+  spec is IDEMPOTENT (verified live — keys arrive exactly once), so the
+  adapter now (1) full-steals the wanted set in `applyMode`, (2)
+  re-asserts on FocusedRemChange + stray EditorTextEdited via
+  `reassertSteals()` (throttled, and ON the key queue — off-queue it races
+  applyMode's insert release and eats typed text), and (3) ticks a 5s
+  timer. Don't "optimize" these back to diffs.
 - **The command line is shift-blind too** (typed Ex characters arrive through
   the same steal): capitals and shifted punctuation are UNTYPEABLE in
   `:commands` — `ALPHA` arrives as `alpha`, `$`→`4`, `%`→`5`, `(`→`9`,
