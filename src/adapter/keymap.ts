@@ -100,6 +100,9 @@ for (const b of ALL_BINDINGS) {
 
 export function bindingsForMode(mode: string): KeyBinding[] {
   if (mode === 'insert') return INSERT_BINDINGS;
-  if (mode === 'command') return COMMAND_BINDINGS;
+  // 'search' steals the same full printable set as command mode: a typed
+  // pattern needs every key that a `;` command line does (letters, digits,
+  // '/', '-', etc.), not just the normal-mode subset.
+  if (mode === 'command' || mode === 'search') return COMMAND_BINDINGS;
   return NORMAL_BINDINGS;
 }

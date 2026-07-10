@@ -25,6 +25,7 @@ import {
   cyclePaneId,
   decideRedo,
   decideUndo,
+  findSearchMatch,
   flattenRich,
   isDescendantAmong,
   isEscapeWanted,
@@ -33,6 +34,7 @@ import {
   resolveInsertCaret,
   retryUntilTrue,
   sanitizeInsert,
+  SearchUnit,
   settleRead,
   truncateLabel,
   walkToBoundary,
@@ -71,6 +73,7 @@ const MODE_COLORS: Record<Mode, string> = {
   visual: '#d97706',
   'visual-line': '#d97706',
   command: '#0ea5e9',
+  search: '#db2777',
 };
 
 /**
@@ -86,6 +89,7 @@ const MODE_COLORS_DARK: Record<Mode, string> = {
   visual: '#fbbf24',
   'visual-line': '#fbbf24',
   command: '#38bdf8',
+  search: '#f472b6',
 };
 
 const MODE_LABELS: Record<Mode, string> = {
@@ -94,6 +98,7 @@ const MODE_LABELS: Record<Mode, string> = {
   visual: 'VISUAL',
   'visual-line': 'V-LINE',
   command: 'COMMAND',
+  search: 'SEARCH',
 };
 
 export class VimAdapter {
@@ -213,6 +218,8 @@ export class VimAdapter {
   private suggestIdx = -1;
   /** Monotonic counter so stale async search results can't overwrite newer ones. */
   private suggestSeq = 0;
+  /** The pattern from the last `space<pattern><CR>` submit, for `n`/`z` to repeat. */
+  private lastSearchPattern: string | null = null;
 
   constructor(private plugin: RNPlugin) {
     // Dev/e2e introspection hook: lets the CDP harness call SDK methods
@@ -580,6 +587,8 @@ export class VimAdapter {
       case 'setMark': // no document change at all
       case 'replayKeys': // the replayed keys maintain the model themselves
       case 'collapseSelection': // exec sets model.caret itself
+      case 'search': // exec's performSearch installs a fresh model itself
+      case 'searchStep': // ditto — a no-op when there's no previous search
         // newBullet installs its own model in exec; copyText's fallback path
         // maintains the model caret itself in exec; the others don't change
         // the focused line's text. Insert-mode exit is reconciled separately.
@@ -1156,6 +1165,19 @@ export class VimAdapter {
         break;
       }
 
+      case 'search':
+        this.lastSearchPattern = a.pattern;
+        await this.performSearch(a.pattern, snap, 1);
+        break;
+
+      case 'searchStep':
+        if (this.lastSearchPattern == null) {
+          await this.plugin.app.toast('No previous search');
+          break;
+        }
+        await this.performSearch(this.lastSearchPattern, snap, a.dir);
+        break;
+
       case 'joinRem': {
         // vim J: count 1 and 2 both join once; 3gj joins three bullets.
         const joins = Math.max(1, a.count - 1);
@@ -1630,6 +1652,21 @@ export class VimAdapter {
     await app.toast(`${keyed.length} bullets sorted`);
   }
 
+  /**
+   * Every Rem in the currently open document, top-to-bottom traversal order
+   * (assumed from `getDescendants()` — this codebase's only whole-document
+   * enumeration primitive), capped at 500 like `:g/pattern/d` always was to
+   * keep a single scan bounded on huge documents. Shared by `globalDelete`
+   * and the space-search feature: both need "every Rem's text, in order".
+   */
+  private async allDocumentRems() {
+    const paneRemId = await this.plugin.window.getOpenPaneRemId(
+      await this.plugin.window.getFocusedPaneId()
+    );
+    const doc = paneRemId ? await this.plugin.rem.findOne(paneRemId) : null;
+    return doc ? (await doc.getDescendants()).slice(0, 500) : [];
+  }
+
   /** `:g/pat/d` — delete every matching bullet (subtree included) in the doc. */
   private async globalDelete(pat: string, cmdFlag: string) {
     const app = this.plugin.app;
@@ -1648,11 +1685,7 @@ export class VimAdapter {
       await app.toast(`Bad pattern: /${pat}/`);
       return;
     }
-    const paneRemId = await this.plugin.window.getOpenPaneRemId(
-      await this.plugin.window.getFocusedPaneId()
-    );
-    const doc = paneRemId ? await this.plugin.rem.findOne(paneRemId) : null;
-    const all = doc ? (await doc.getDescendants()).slice(0, 500) : [];
+    const all = await this.allDocumentRems();
     const matches = [];
     for (const r of all) {
       const txt = (await this.plugin.richText.toString((r.text ?? []) as RichTextInterface)) ?? '';
@@ -2316,6 +2349,57 @@ export class VimAdapter {
     return isDescendantAmong(remId, descendantIds);
   }
 
+  /**
+   * `space<pattern><CR>` / `n` / `z`: find the next (`dir: 1`) or previous
+   * (`dir: -1`) match of `pattern` across the WHOLE document — reusing
+   * `allDocumentRems` (the same enumeration `:g/pattern/d` uses) and
+   * `flattenRich` (the model-space flatten every other motion/edit reasons
+   * in, so match offsets land correctly on lines with a rem reference/image/
+   * LaTeX chip) — and jump the real cursor there via `focusRemById`, the
+   * same cross-Rem jump primitive `gotoMark`/Ctrl-O already use.
+   *
+   * No absolute caret-set API exists in this sandbox (only a RELATIVE
+   * `moveCaret`, see CLAUDE.md), and `focusRemById`'s row-walk leaves the
+   * caret at whatever column the vertical move happened to preserve — so
+   * after the jump this reads where the REAL caret actually landed (via a
+   * fresh `snapshot()`, since the model was just invalidated) and walks a
+   * relative delta from there to the exact match offset.
+   */
+  private async performSearch(pattern: string, snap: Snapshot, dir: 1 | -1) {
+    const app = this.plugin.app;
+    const rems = await this.allDocumentRems();
+    const units: SearchUnit[] = rems.map((r) => ({
+      id: r._id,
+      text: flattenRich((r.text ?? []) as RichTextInterface),
+    }));
+    const fromId = this.model?.remId ?? (await this.plugin.focus.getFocusedRem())?._id;
+    const outcome = findSearchMatch(units, fromId, snap.caret, pattern, dir);
+    if (!outcome.ok) {
+      await app.toast(
+        outcome.reason === 'badPattern'
+          ? `Bad pattern: /${pattern}/`
+          : `Pattern not found: /${pattern}/`
+      );
+      return;
+    }
+    await this.recordJump(); // search jumps are Ctrl-O-able, like gg/G/:e
+    await this.focusRemById(outcome.match.id);
+    this.invalidateModel();
+    const post = await this.snapshot(); // the REAL caret, wherever the row-walk left it
+    const target = clamp(outcome.match.start, 0, post.text.length);
+    const delta = stopsBetween(post.text, post.caret, target);
+    if (delta !== 0) {
+      await this.plugin.editor.moveCaret(delta, MoveUnit.CHARACTER);
+    }
+    if (this.model) this.model.caret = target;
+    this.lastCaret = target;
+    if (outcome.wrapped) {
+      await app.toast(
+        dir === 1 ? 'search hit BOTTOM, continuing at TOP' : 'search hit TOP, continuing at BOTTOM'
+      );
+    }
+  }
+
   /** Serialize a Rem including its whole subtree into a register node. */
   private async captureSubtree(r: {
     text?: unknown;
@@ -2637,6 +2721,9 @@ export class VimAdapter {
         .map((s, i) => `${i === this.suggestIdx ? '▸' : ' '} ${esc(s.label)}`)
         .join('\\A');
       label = `${menu ? menu + '\\A' : ''}:${range}${esc(this.state.commandLine)}`;
+    } else if (mode === 'search') {
+      // vim convention: '/' prefixes a forward search line.
+      label = `/${esc(this.state.searchLine)}`;
     } else {
       label = `-- ${MODE_LABELS[mode]} --`;
     }
@@ -2658,7 +2745,7 @@ export class VimAdapter {
     // plus the bright caret-color below IS the mode indicator at the caret.
     const dark = MODE_COLORS_DARK[mode];
     const cursorLineCss =
-      mode === 'normal' || mode === 'visual' || mode === 'command'
+      mode === 'normal' || mode === 'visual' || mode === 'command' || mode === 'search'
         ? `
       [data-rem-id]:focus-within {
         background: color-mix(in srgb, ${color} 8%, transparent); border-radius: 4px;
@@ -2680,7 +2767,7 @@ export class VimAdapter {
       [contenteditable="true"] { caret-color: ${color}; }
       body.dark [contenteditable="true"] { caret-color: ${dark}; }
       @supports (caret-shape: block) {
-        [contenteditable="true"] { caret-shape: ${mode === 'command' ? 'bar' : 'block'}; }
+        [contenteditable="true"] { caret-shape: ${mode === 'command' || mode === 'search' ? 'bar' : 'block'}; }
       }`
         : '';
     // Charwise visual: the native selection is the vim selection — paint it

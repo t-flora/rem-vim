@@ -185,6 +185,7 @@ function VimHelp() {
           <span className="modeChip" style={{ background: '#d97706' }}>VISUAL</span>
           <span className="modeChip" style={{ background: '#d97706' }}>V-LINE</span>
           <span className="modeChip" style={{ background: '#0ea5e9' }}>COMMAND</span>
+          <span className="modeChip" style={{ background: '#db2777' }}>SEARCH</span>
         </div>
       </div>
 
@@ -217,10 +218,17 @@ function VimHelp() {
             <Row keys={[',']} desc="repeat the last f/gf jump (reversed)" />
           </Section>
 
+          <Section title="Search">
+            <Row keys={['Space']} desc="start a search — type a pattern, Enter jumps to it" />
+            <Row keys={['n']} desc="repeat the search forward  (wraps at the end)" />
+            <Row keys={['z']} desc="repeat the search backward  (vim: N; wraps at the start)" />
+            <Row keys={['Esc']} desc="cancel the search prompt without moving" />
+          </Section>
+
           <Section title="Scroll & jumps">
             <Row keys={['Ctrl-d']} desc="half page down" />
             <Row keys={['Ctrl-u']} desc="half page up" />
-            <Row keys={['Ctrl-o']} desc="back to before the last gg/ge/:e jump" />
+            <Row keys={['Ctrl-o']} desc="back to before the last gg/ge/:e/search jump" />
             <Row keys={['Ctrl-i']} desc="forward again" />
             <Row keys={['Ctrl-h', 'Ctrl-l']} desc="focus previous / next pane" />
           </Section>

@@ -938,6 +938,99 @@ before merge, `movePane`'s `setRemWindowTree` rebuild especially (same class
 of risk `:vs`/`:sp`/`:q` already carry, per §9's `positionAmongstSiblings`
 race note). `npm run check-types`, `npm test` (378/378), and `npm run build`
 all green.
+### 2026-07-10 — Incremental search (`space`/`n`/`z`) — on `feature/space-search`, NOT yet live-verified
+
+Vim-style whole-document search, built on a branch parallel to several other
+in-flight feature branches (keybind-config among them) — merge order/
+conflicts are the orchestrator's problem, not addressed here.
+
+**Design:** new `'search'` `Mode` (types.ts) + `state.searchLine` buffer,
+handled by `handleSearch()` in engine.ts — structurally a copy of
+`handleCommand` (accumulate/Enter-submits/Escape-cancels/Backspace-past-
+start-exits), entered only from NORMAL mode. Submitting emits `{t:'search',
+pattern}`; bare `n`/`z` in NORMAL mode emit `{t:'searchStep', dir:1|-1}`
+directly (no mode change — same shape as `.`). Match-FINDING lives entirely
+in the adapter (`performSearch`, adapter.ts) since it needs async whole-
+document Rem enumeration — the engine never sees a match, only the typed
+pattern. The actual matching logic is a new pure, SDK-free helper,
+`findSearchMatch` (pure.ts): given a list of `{id, text}` units (already in
+document order), a `(fromId, fromOffset)` position and a direction, it
+returns the next/previous regex match plus whether it had to wrap — fully
+unit-testable without any Rem/SDK involvement, per this repo's stated
+testing philosophy that the pure core is what's worth testing hardest. One
+real bug caught BY writing its tests: naively clamping an unrecognized
+`fromId` to unit index 0 made a forward search from "position unknown"
+occasionally report a false wrap (or a backward search skip a real wrap) —
+fixed by treating "not found" as index `-1` ("before the very first unit")
+instead of clamping to `0`, so the direction comparisons degrade correctly
+instead of accidentally comparing against unit 0's `fromOffset`.
+
+**Adapter wiring:** `performSearch` reuses `allDocumentRems()` — a new
+helper factored out of `globalDelete` (`:g/pat/d`'s existing whole-document
+enumeration, `getOpenPaneRemId` → `getDescendants().slice(0,500)`), so
+there's exactly one "enumerate the whole document" code path, not two. Each
+Rem's text goes through `flattenRich` (the same model-space flatten every
+motion uses), so match offsets land correctly on lines with a rem
+reference/image/LaTeX chip. The actual jump reuses `focusRemById` (the same
+primitive `gotoMark`/Ctrl-O already use — a `walkCaretTo` row-walk, falling
+back to `openRem` for an out-of-reach target) after `recordJump()` (so
+search jumps are `Ctrl-O`-able, like `gg`/`G`/`:e`). Since this sandbox has
+no absolute-caret API (only a *relative* `moveCaret`, see the CLAUDE.md
+section on this), landing the caret at the exact match OFFSET within the
+target line — as opposed to just the target Rem — required re-reading where
+the jump's row-walk actually left the real caret (`invalidateModel()` then a
+fresh `snapshot()`) and walking a relative delta from there via
+`stopsBetween`. This is, as far as I can tell, the first call site in this
+file that does intra-line positioning after a cross-Rem jump; every
+prior jump (`gotoMark`, `goDoc`, Ctrl-O) just lands wherever the row-walk
+happens to leave the caret and stops there.
+
+**The `space`/`l` collision (deliberate, per the task):** `space` was
+previously a synonym for `l` (right-motion) — `keymap.ts`'s `named` array
+already stole it, and `motionFor`'s `case 'l': case ' ':` treated them
+identically. That alias is now GONE (`motionFor` only matches `'l'`); `space`
+alone starts search. `l` itself is completely unaffected. This is a real,
+if minor, behavior change for anyone who'd been pressing space out of vim
+muscle memory for right-motion — worth calling out explicitly since it's not
+obvious from a diff that only adds code.
+
+**The `n`/prev-match key choice:** `n` was confirmed reserved for this
+feature (next match) — free across the whole engine, matches real vim. Real
+vim's reverse-search key is `N`, but shifted keys are unreachable (shift-
+blind stealing, keymap.ts's header), so an unshifted stand-in is needed.
+Re-grepping `case '` in engine.ts's normal-mode switch at implementation
+time confirmed `q` and `z` were still the only free single letters (as the
+task brief predicted). Picked **`z`** over `q` — no strong mnemonic either
+way, but `q` is vim's own macro-record key, a much more idiomatic future use
+for that letter than anything `z` currently means in this codebase, so `z`
+was the lower-regret choice. Documented at both call sites (engine.ts's
+`case 'z'` comment, `vim_help.tsx`'s Search section) in case a future
+contributor wants to revisit it.
+
+**Other adapter changes:** `Mode`-keyed records (`MODE_COLORS`/
+`MODE_COLORS_DARK`/`MODE_LABELS`) and `bindingsForMode` (keymap.ts) gained a
+`search` case — the last one steals the same full printable set as command
+mode (a typed pattern needs digits/`-`/`/` etc., not just the normal-mode
+subset). `render()` shows the typed pattern prefixed with `/` (vim
+convention) while composing, mirroring exactly how command mode shows `:`.
+
+**Tests:** engine suite covers search-mode entry/typing/Enter-submit/
+Escape-cancel/backspace-to-exit (mirroring the existing command-line test
+block) and `n`/`z` dispatch including wraparound, all via `Harness` (which
+implements `search`/`searchStep` by calling the SAME `findSearchMatch`
+helper the real adapter uses, with document rows standing in for Rem ids —
+much simpler than the real adapter since a fake editor can just set
+row/caret directly instead of doing the real jump-then-reposition dance, but
+it exercises the identical matching logic, so the tests mean something).
+`findSearchMatch` itself has a dedicated pure-unit suite (17 cases:
+empty/bad-pattern/no-match rejections, forward/backward same-unit and
+cross-unit matches — including "nearest match wins, not first-in-document"
+for backward — both wrap directions, the not-found-fromId edge case, real
+regex patterns, case-sensitivity, and a zero-width-match termination check).
+**388/388 unit tests green** (`npm test`); `npm run check-types` clean.
+**Not live-verified** — no RemNote instance available this session; the
+cross-Rem jump-then-reposition path in particular (new territory, see above)
+should get an e2e pass before this is trusted the way `gg`/`:e` are.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1975,8 +2068,9 @@ Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
 - **Modes** — `i` insert / `Esc` normal / `v` charwise visual / `vv`
-  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line; mode badge
-  bottom-right; per-mode key stealing (insert releases everything but Esc).
+  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line / `space`
+  incremental search; mode badge bottom-right; per-mode key stealing (insert
+  releases everything but Esc).
 - **Motions** — `h l 0 w b e f<c> t<c>` `,`(reverse find repeat), counts
   (incl. `[count]f/t`, e.g. `2fx`, `d2fx`); code-point safe (emoji and
   atomic elements are one character to every motion/edit);
@@ -2024,7 +2118,18 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   recovery) — clipboard gets RemNote's own `- bullet` serialization. Badge
   `clip:` field shows which path fired (`clip:native`/`clip:api`/
   `clip:exec`/`clip:FAIL`).
-- **Jumplist** — `Ctrl-O`/`Ctrl-I` over `gg`/`ge`/`:e` jumps (vim
+- **Incremental search** — `space<pattern><Enter>` jumps the real cursor to
+  the first match at-or-after the caret, searching every Rem in the
+  document (top-to-bottom, same enumeration as `:g/pat/d`); `n` repeats
+  forward, `z` repeats backward (vim's `N` — `z` was the free-letter pick,
+  see engine.ts's comment on the case). Wraps around the document boundary
+  like vim's `wrapscan`, with a "search hit BOTTOM/TOP" toast. Pattern is a
+  plain JS regex, case-sensitive (same convention as `:g`/`:s`). `space` was
+  previously a synonym for `l` (right-motion) — that alias is gone now that
+  space starts search; `l` itself is unaffected. A search jump is
+  `Ctrl-O`-able like `gg`/`:e`. NOT yet live-verified (added on
+  `feature/space-search`; unit-tested only — see the dated entry below).
+- **Jumplist** — `Ctrl-O`/`Ctrl-I` over `gg`/`ge`/`:e`/search jumps (vim
   truncate-forward semantics).
 - **Panes** — `Ctrl-H`/`Ctrl-L` focus previous/next pane (the vim-classic
   `C-w h`/`C-w l` chord is also bound but a real Ctrl+W never reaches the
