@@ -15,6 +15,57 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-10 (later) — integration batch reviewed, hardened, live-verified, MERGED to main
+
+Review + test pass over `integration/vim-feature-batch` (the entry below),
+then merged to `main`. Two real bugs found and fixed, both invisible to the
+unit suite as it stood:
+
+1. **Search-mode steal crash** (would have bricked the feature live):
+   `effectiveSpecs('search', …)` indexed `config.unmapSpecs['search']` —
+   undefined, the per-mode tables only exist for the three normal-family
+   modes — so `applyMode('search')` threw on every `space`, the prompt never
+   rendered and `/`/`-`/`=`/tab were never stolen while typing a pattern.
+   The feature branch had patched the superseded `bindingsForMode` only; the
+   mappings layer (merged to main the same day from `keybind-config`) never
+   learned about the new mode. Fix: search takes command mode's early return
+   in `effectiveSpecs`. **This is the generalized version of the §0-entry-
+   below's merge lesson: a branch rooted before a big main-side refactor can
+   compile AND pass its own tests yet still crash at the seam the refactor
+   moved** — grep every `Record<Mode/MapMode, …>` consumer when adding a
+   Mode variant. Regression-tested at three layers (mutation-verified: 3
+   tests fail with the fix reverted).
+2. **`gs` surround live mis-insert** (`'()abc'` instead of `'(abc)'`) —
+   caught only by the new live probe: gs skips `deleteRange` (chip
+   preservation), so unlike every other visual mutator the native selection
+   is still live when the first insertText's relative `moveCaret` runs, and
+   a relative move against a live selection RESIZES it (the §"no absolute
+   caret API" constraint). Fix: the surround action list now leads with
+   `collapseSelection`. Pinned by a raw action-order engine test — the
+   Harness cannot catch this class of bug (its moveCaret ignores selection
+   state); anything that mutates text while a native selection is live MUST
+   consume it first (deleteRange does) or collapse it explicitly.
+
+New coverage: `tests/adapter-search.test.ts` (L3 — real VimAdapter driving
+`performSearch`/`gotoLine` against the fake plugin; fake-plugin gained
+`getDescendants` + a document-order `moveCaretVertical` + `seedDoc`, making
+whole-document adapter paths testable), search-mode regression tests in
+`tests/mappings.test.ts`, cross-feature interaction tests in
+`tests/engine.test.ts` (`d<space>` cancels the op, counts don't leak into
+search, dot ignores search, space/n/z inert in visual, gs charwise-only,
+`:N` passthrough). Suite now 634/634 (was 608), `check-types` + build clean.
+
+**Live pass (RemNote 1.26.30, e2e scratch vault): `e2e/batch.mjs` (new)
+17/17 — space-search jump + n/z wrap both directions + wrap toasts + Escape
+cancel + SEARCH badge, `:1`/`:8`/`:999` goto-line incl. clamping, `gf`,
+visual backtick case toggle, `gs9` surround, `gn`/`gc` panes; `run.mjs`
+16/16.** Not live-covered: `gm` pane-move (needs a 3-pane probe), `gt`/`gp`
+(same `focusPane` path as the verified Ctrl-H/Ctrl-L), `:help` j/k scroll
+(live-verified in its own earlier session, see its entry). batch.mjs also
+handles two fresh-launch hazards run.mjs assumes away: click-until-focused
+(a new window swallows synthetic clicks even after bringToFront) and
+navigating from the restored "Daily Document" index page to today's note.
+
 ### 2026-07-10 — 7 feature branches merged into `integration/vim-feature-batch`
 
 Orchestrated 7 features (`gf`, incremental search, visual surround, visual
@@ -2170,18 +2221,21 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   plain JS regex, case-sensitive (same convention as `:g`/`:s`). `space` was
   previously a synonym for `l` (right-motion) — that alias is gone now that
   space starts search; `l` itself is unaffected. A search jump is
-  `Ctrl-O`-able like `gg`/`:e`. NOT yet live-verified (added on
-  `feature/space-search`; unit-tested only — see the dated entry below).
+  `Ctrl-O`-able like `gg`/`:e`. Live-verified 2026-07-10 (`e2e/batch.mjs`:
+  jump, `n`/`z` repeat in both directions, wrap toasts, Escape cancel) after
+  fixing the search-mode steal-set crash — see the review entry in §0.
 - **Jumplist** — `Ctrl-O`/`Ctrl-I` over `gg`/`ge`/`:e`/search jumps (vim
   truncate-forward semantics).
 - **Panes** — `Ctrl-H`/`Ctrl-L` focus previous/next pane (the vim-classic
   `C-w h`/`C-w l` chord is also bound but a real Ctrl+W never reaches the
   desktop app — Electron eats it; see §9). `gt`/`gp` do the same next/prev
   cycling as unshifted g-chords (tab-next/prev mnemonic, branch
-  `feature/pane-tabs`, not yet live-verified); `gn` new pane (`:vs`'s path),
-  `gc` close pane (`:q`'s path), `gm` then `h`/`l` move the focused pane
-  left/right in that same cycle order (best-effort — rebuilds the pane tree
-  flat, same tradeoff as `:vs`/`:sp`/`:q` below).
+  `feature/pane-tabs`; they ride the same `focusPane` path as the
+  live-verified Ctrl-H/Ctrl-L); `gn` new pane (`:vs`'s path) and `gc` close
+  pane (`:q`'s path) live-verified 2026-07-10 (`e2e/batch.mjs`); `gm` then
+  `h`/`l` move the focused pane left/right in that same cycle order
+  (best-effort — rebuilds the pane tree flat, same tradeoff as
+  `:vs`/`:sp`/`:q` below; NOT live-verified — needs a 3-pane layout probe).
 - **Scrolling** — `Ctrl-D`/`Ctrl-U` (caret page-moves; view follows).
   `Ctrl-E`/`Ctrl-Y` deliberately unbound — no view-scroll API exists.
 - **Command line** — opened with `;` only (`/` now belongs to RemNote's own
