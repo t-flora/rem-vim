@@ -990,6 +990,16 @@ export class VimAdapter {
       return;
     }
 
+    // :N — jump to the Nth bullet (Rem) from the top of the document (vim's
+    // line-number range prefix; this codebase's "line" = one Rem). A bare
+    // digit string is not verb-shaped, so — like :s/:g above — it's matched
+    // before the verb switch rather than falling through split(/\s+/).
+    if (/^\d+$/.test(cmd.trim())) {
+      await this.recordJump(); // :N is a jump — Ctrl-O returns here
+      await this.gotoLine(parseInt(cmd.trim(), 10));
+      return;
+    }
+
     switch (verb) {
       case 'w':
       case 'write':
@@ -1560,6 +1570,44 @@ export class VimAdapter {
       }
     } catch (e) {
       await this.plugin.app.toast(`Search failed: ${String(e)}`);
+    }
+  }
+
+  /**
+   * `:N` — walk the live caret to the Nth bullet (Rem) from the top of the
+   * document, 1-indexed (`:0` clamps to line 1 — vim has no line 0). First
+   * walks to the document START the same way `goDoc`'s 'start' case does
+   * (repeated moveCaretVertical(-1), stopping once focus stops changing —
+   * the document boundary), then hops DOWN n-1 more times.
+   *
+   * The second leg checks focus after EVERY hop (no batching): unlike a
+   * walk to a true boundary, an unchecked hop here is only harmless once
+   * the real last line has been reached — short of that it would land on
+   * the wrong interior line instead of no-op'ing. Checking every hop keeps
+   * the common case (document has >= n lines) landing exactly on line n,
+   * while the same "focus stopped changing" check still clamps the
+   * pathological case (n past the end of a shorter document) to the last
+   * line, matching vim's own `:999`-past-EOF behavior instead of erroring.
+   */
+  private async gotoLine(n: number) {
+    const { editor, focus } = this.plugin;
+    const target = Math.max(1, n);
+    let prevId: string | undefined;
+    // Leg 1: walk to the document start (mirrors goDoc's 'start' case).
+    for (let i = 0; i < 200; i++) {
+      await editor.moveCaretVertical(-1);
+      const f = await focus.getFocusedRem();
+      if (!f || f._id === prevId) break;
+      prevId = f._id;
+    }
+    // Leg 2: hop down exactly target-1 more times, stopping early if the
+    // document is shorter than target (boundary reached).
+    prevId = undefined;
+    for (let i = 0; i < target - 1; i++) {
+      await editor.moveCaretVertical(1);
+      const f = await focus.getFocusedRem();
+      if (!f || f._id === prevId) break;
+      prevId = f._id;
     }
   }
 
