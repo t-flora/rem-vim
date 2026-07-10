@@ -862,6 +862,31 @@ function handleVisual(state: VimState, key: string, snap: Snapshot): EngineResul
       return toMode(state, 'normal', [{ t: 'indent' }]);
     case '<':
       return toMode(state, 'normal', [{ t: 'outdent' }]);
+    case '~':
+    case '`': {
+      // backtick doubles as ~ (Shift+` is invisible to the key stealing) —
+      // same convention as normal-mode `~`. Unlike normal-mode `~`, this
+      // toggles the WHOLE selection (no count-width slicing needed: the
+      // selection itself is the target), and vim's real visual `~` does NOT
+      // yank the original text, so state.register is left untouched.
+      if (slice.includes(ATOMIC_CH)) {
+        // Same refusal as normal-mode `~`: an atomic rich-text placeholder
+        // can't be reconstructed by insertText (sanitizeInsert strips it),
+        // so toggling case around/through one would silently destroy the
+        // chip. Still leave visual mode, like every other visual command.
+        return toMode(state, 'normal', [{ t: 'setCaret', at: range.start }]);
+      }
+      const toggled = [...slice]
+        .map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()))
+        .join('');
+      return toMode(state, 'normal', [
+        { t: 'deleteRange', start: range.start, end: range.end, keepLead: true },
+        { t: 'insertText', at: range.start, text: toggled },
+        // insertText alone would leave the caret after the (same-length)
+        // toggled text; vim leaves the cursor at the START of the region.
+        { t: 'setCaret', at: range.start },
+      ]);
+    }
 
     // command line from charwise visual — range commands (:s) act on the
     // focused bullet ('/' is not stolen; it belongs to RemNote's slash menu)

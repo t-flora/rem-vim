@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Harness } from './harness';
+import { ATOMIC_CH } from '../src/engine/motions';
 
 const h = (lines: string[] | string, row = 0, caret = 0) =>
   new Harness(typeof lines === 'string' ? [lines] : lines, row, caret);
@@ -488,6 +489,57 @@ describe('visual mode (charwise, plain v)', () => {
     expect(e2.vSelRows).toEqual([1, 3]);
     e2.keys('d');
     expect(e2.lines).toEqual(['a']);
+  });
+});
+
+describe('visual mode case toggle (` / ~)', () => {
+  it('toggles a mixed-case selection and returns to normal mode at its start', () => {
+    const e = h('AbCdEf');
+    e.keys('vlll`'); // selects "AbCd"
+    expect(e.line).toBe('aBcDEf');
+    expect(e.mode).toBe('normal');
+    expect(e.caret).toBe(0);
+  });
+
+  it('~ is the same command (shift-blind synonym)', () => {
+    const e = h('AbCdEf');
+    e.keys('vlll~');
+    expect(e.line).toBe('aBcDEf');
+  });
+
+  it('toggles an all-lowercase selection to uppercase', () => {
+    const e = h('hello world', 0, 0);
+    e.keys('ve`'); // selects "hello"
+    expect(e.line).toBe('HELLO world');
+  });
+
+  it('toggles an all-uppercase selection to lowercase', () => {
+    const e = h('HELLO world', 0, 0);
+    e.keys('ve`');
+    expect(e.line).toBe('hello world');
+  });
+
+  it('non-letter characters in the selection pass through unchanged', () => {
+    const e = h('a1 b2!c', 0, 0);
+    e.keys('v$`'); // selects the whole line
+    expect(e.line).toBe('A1 B2!C');
+  });
+
+  it('does not yank into the register — vim visual ~ never yanks', () => {
+    const e = h('ab CD', 0, 0);
+    e.keys('yl'); // char register = 'a'
+    e.keys('$vh`'); // select "CD", toggle -> "cd"
+    expect(e.line).toBe('ab cd');
+    e.keys('0p'); // paste: still the ORIGINAL 'a', unaffected by the toggle
+    expect(e.line).toBe('aab cd');
+  });
+
+  it('refuses a selection containing an atomic-element placeholder', () => {
+    const line = `see ${ATOMIC_CH} end`;
+    const e = h(line, 0, 0);
+    e.keys('v$`'); // selects the whole line, including the chip
+    expect(e.line).toBe(line);
+    expect(e.mode).toBe('normal');
   });
 });
 

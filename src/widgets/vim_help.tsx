@@ -207,6 +207,7 @@ function VimHelp() {
             <Row keys={['d']} desc="cut the selection" />
             <Row keys={['y']} desc="copy it (also to the clipboard)" />
             <Row keys={['p']} desc="paste" />
+            <Row keys={['`']} desc="toggle UPPER/lower case of the selection  (vim: ~, text-select only)" />
             <Row keys={['.']} desc="indent selected bullets  (vim: >)" />
             <Row keys={[',']} desc="outdent them  (vim: <)" />
             <Row keys={[';']} desc="run a command on the selection ↓" />
