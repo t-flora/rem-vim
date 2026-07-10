@@ -802,6 +802,15 @@ per-character text edits), so it's not the "trivial to add" case the task
 allowed for. 6 new tests in `tests/engine.test.ts` (mixed/lower/upper-case
 selections, non-letter passthrough, no-yank check, chip refusal);
 `check-types` clean, full suite 367/367 green.
+### 2026-07-10 — `gf<char>`: g-chord synonym for `F` (find char backward)
+
+Added `gf<char>` as the shift-blind synonym for vim's `F<char>` (dead code
+before now — real `F` can never reach the engine via RemNote's shift-blind
+key stealing), reusing the existing `find`-pending continuation so
+`dgf<char>`, `,`-repeat, and counts all work unchanged; mirrored into
+charwise visual (`vgf<char>`). `T`/backward-till stays out of scope (not
+requested). 4 new unit tests added; `:help` and §0.5 updated. Branch:
+`feature/gf-backward-find`.
 
 ### 2026-07-08 — Block cursor: FINAL decision — caret-shape only, wait for the platform
 
@@ -1845,11 +1854,13 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   (incl. `[count]f/t`, e.g. `2fx`, `d2fx`); code-point safe (emoji and
   atomic elements are one character to every motion/edit);
   g-chords for shift-blind capitals: `gl`=`$` `gh`=`^` `gg` `ge`=`G`
-  `ga`=`A` (append at line end).
+  `ga`=`A` (append at line end) `gf<c>`=`F<c>` (find char backward,
+  landing on it).
   `e` uses I-beam semantics (any forward progress counts), so `de` on
   `a asdf` deletes just `a`.
 - **Operators** — `d c y` + motions/text objects (`dw de db dd df<c> dt<c>
-  diw daw`), `dgl`=`d$`, `dgh`=`d^`, `x X s S D C`, `r<c>`, backtick=`~`.
+  diw daw`), `dgl`=`d$`, `dgh`=`d^`, `dgf<c>`=`dF<c>`, `x X s S D C`, `r<c>`,
+  backtick=`~`.
 - **Text objects** — `iw aw`, pairs `ib ab`(=`i(`/`a(`) `i[ a[`, quotes
   `i' a'` `` i` a` `` — under d/c/y and in charwise visual (`vi[`). `i{`/`i"`
   exist in the engine but are untypeable live (shifted keys).
@@ -1862,7 +1873,7 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Dot-repeat `.`** — repeats the last completed normal-mode change (`dw`,
   `3x`, `r<c>`, `p`, `gj`, `C-a`…). Changes that enter insert mode (`cw`,
   `o`) are NOT recorded — inserted text never reaches the engine.
-- **Charwise visual** — `v` + `h/l/w/b/e/f/gl/gh` to shape; `d x c s y p o`,
+- **Charwise visual** — `v` + `h/l/w/b/e/f/gf/gl/gh` to shape; `d x c s y p o`,
   backtick=`~` (toggle case of the whole selection, no yank, cursor lands at
   the selection start — vim semantics); `gg/ge/G` escalate to line-wise to
   the doc boundary. Visual-line has no case-toggle binding (would need a new

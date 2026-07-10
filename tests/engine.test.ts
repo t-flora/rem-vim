@@ -210,6 +210,12 @@ describe('operators with motions', () => {
     expect(e2.line).toBe('world');
   });
 
+  it('dgf<char> deletes backward-to-and-including the char (live d F)', () => {
+    const e = h('hello world', 0, 11);
+    e.keys('dgfo');
+    expect(e.line).toBe('hello w');
+  });
+
   it('d with count: d2w', () => {
     const e = h('one two three four');
     e.keys('d2w');
@@ -445,6 +451,14 @@ describe('visual mode (charwise, plain v)', () => {
     const e2 = h('  abc', 0, 4);
     e2.keys('vghd'); // anchor on 'c', back to first non-blank: "abc" goes
     expect(e2.line).toBe('  ');
+  });
+
+  it('vgf<char> extends the selection backward to a char (live v F)', () => {
+    const e = h('hello world', 0, 10); // head on the 'd'
+    e.keys('vgfw');
+    expect(e.sel).toEqual({ start: 6, end: 11 }); // "world"
+    e.keys('d');
+    expect(e.line).toBe('hello ');
   });
 
   it('vc changes the selection', () => {
@@ -746,6 +760,22 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
   it(', after F repeats forward and actually moves (was stuck on-char)', () => {
     const e = h('xoxo', 0, 3);
     e.keys('Fo');
+    expect(e.caret).toBe(1);
+    e.keys(',');
+    expect(e.caret).toBe(3); // back forward to the o it started on
+  });
+
+  it('gf<char> is the unshifted-synonym trigger for F: finds backward, landing ON the char', () => {
+    const e = h('the lazy dog', 0, 8); // caret just after "lazy", before the space
+    e.keys('gfl');
+    expect(e.caret).toBe(4); // ON the l of "lazy", not one before/after it
+    e.keys('x');
+    expect(e.line).toBe('the azy dog');
+  });
+
+  it(', after gf repeats the backward find forward (lastFind tracks the g-chord as F)', () => {
+    const e = h('xoxo', 0, 3);
+    e.keys('gfo');
     expect(e.caret).toBe(1);
     e.keys(',');
     expect(e.caret).toBe(3); // back forward to the o it started on
