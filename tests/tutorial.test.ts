@@ -1,199 +1,229 @@
 /**
- * Getting-started tutorial (src/widgets/vim_tutorial.tsx + index.tsx gating).
+ * The "Vim Tutorial" practice document — content (src/adapter/tutorialDoc.ts),
+ * document lifecycle (VimAdapter.openTutorial) and first-activation gating
+ * (index.tsx), all without a browser or RemNote:
  *
- * Three layers, none needing a browser:
- * - render: every page server-renders (catches JSX/runtime errors in content);
- * - content accuracy: what the tutorial TEACHES is checked against the real
- *   engine (Harness), keymap and mapping parser, so the walkthrough cannot
- *   drift from what the plugin actually does — this suite is why the
- *   `unmap gt` example (rejected by parseLhs: lhs must be ONE key) was caught;
- * - gating (L3): the real onActivate against the fake plugin — auto-open on
- *   first activation only, palette command re-opens, no duplicate windows.
+ * - content accuracy: every practice line's claim is executed against the
+ *   engine Harness ON THE LINE'S OWN TEXT — the tutorial physically cannot
+ *   teach a command that doesn't do what the line says;
+ * - lifecycle (L3): the real VimAdapter on the fake plugin — create + seed
+ *   once, pin the id, reopen idempotently, re-seed after deletion, reachable
+ *   as the `:tutorial` Ex command;
+ * - gating (L3): the real onActivate — auto-open exactly once, seen flag.
  */
-import { createElement, Fragment } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { parseMappings } from '../src/adapter/mappings';
-import { SPEC_TO_SYM } from '../src/adapter/keymap';
-import { STEPS } from '../src/widgets/vim_tutorial';
-// The vitest alias resolves '@remnote/plugin-sdk' to tests/sdk-stub.ts, so
-// importing the stub by its own path yields the SAME module instance the
-// widgets see — its __stub recorders expose what renderWidget/
-// declareIndexPlugin were called with. (Importing __stub via the package
-// specifier would fail check-types: tsc types the real SDK.)
+import { TUTORIAL_DOC_NAME, TUTORIAL_LINES } from '../src/adapter/tutorialDoc';
+import { VimAdapter } from '../src/adapter/adapter';
 import { __stub } from './sdk-stub';
-import { FakeWorld } from './fake-plugin';
+import { drain, FakeWorld } from './fake-plugin';
 import { Harness } from './harness';
 
-const stepHtml = (i: number) => renderToStaticMarkup(createElement(Fragment, null, STEPS[i].body));
-const kbdTexts = (html: string) =>
-  [...html.matchAll(/<kbd[^>]*>(.*?)<\/kbd>/g)].map((m) =>
-    m[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-  );
+const texts = TUTORIAL_LINES.map((l) => l.text);
+/** The one tutorial line whose text contains `needle` (asserts uniqueness). */
+const lineWith = (needle: string) => {
+  const hits = texts.filter((t) => t.includes(needle));
+  expect(hits, `expected exactly one tutorial line containing "${needle}"`).toHaveLength(1);
+  return hits[0];
+};
 
-describe('tutorial pages render', () => {
-  it('is the advertised 14-page walkthrough, every page non-empty', () => {
-    expect(STEPS).toHaveLength(14);
-    for (let i = 0; i < STEPS.length; i++) {
-      expect(STEPS[i].eyebrow.length).toBeGreaterThan(0);
-      expect(STEPS[i].title.length).toBeGreaterThan(0);
-      expect(stepHtml(i).length).toBeGreaterThan(80);
-    }
-    expect(new Set(STEPS.map((s) => s.title)).size).toBe(STEPS.length);
+describe('tutorial document content structure', () => {
+  it('has lessons, starts at indent 0, and never orphans a nested bullet', () => {
+    expect(TUTORIAL_LINES.length).toBeGreaterThan(25);
+    expect(TUTORIAL_LINES[0].indent).toBe(0);
+    for (const l of TUTORIAL_LINES) expect([0, 1]).toContain(l.indent);
+    expect(TUTORIAL_LINES.filter((l) => l.indent === 0).length).toBeGreaterThanOrEqual(10);
   });
 
-  it('the whole widget component server-renders (welcome page)', () => {
-    expect(__stub.renderedWidget).toBeTypeOf('function');
-    const html = renderToStaticMarkup(createElement(__stub.renderedWidget as never));
-    expect(html).toContain('Vim Mode for RemNote');
-    expect(html).toContain('Next'); // footer nav rendered
+  it("the search practice is honest: 'needle' appears exactly twice, lesson before bottom", () => {
+    const rows = texts.map((t, i) => (t.includes('needle') ? i : -1)).filter((i) => i >= 0);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toBe(texts.length - 1); // the hidden one is the last line
   });
 });
 
-describe('tutorial content is true', () => {
-  it('every single-letter key it shows is actually stolen in normal mode', () => {
-    for (let i = 0; i < STEPS.length; i++) {
-      for (const k of kbdTexts(stepHtml(i))) {
-        if (/^[a-z0-9;,.'`[\]]$/.test(k)) {
-          expect(SPEC_TO_SYM, `page ${i + 1} teaches unbound key '${k}'`).toHaveProperty([k]);
-        }
-      }
-    }
+describe('tutorial practice lines do what they say', () => {
+  it('lesson 1: fz lands on the z of crazy', () => {
+    const words = lineWith('crazy lazy puzzle');
+    const e = new Harness([words.slice(words.indexOf('crazy'))]);
+    e.keys('fz');
+    expect(e.caret).toBe('cra'.length);
   });
 
-  it('every mapping example on the custom-keybindings page parses cleanly', () => {
-    const page = STEPS.findIndex((s) => s.title === 'Custom keybindings');
-    expect(page).toBeGreaterThanOrEqual(0);
-    const examples = kbdTexts(stepHtml(page)).filter((k) => /^(map|nmap|vmap|unmap)\s/.test(k));
-    expect(examples.length).toBeGreaterThanOrEqual(4); // map/nmap/vmap/unmap all shown
-    const { diagnostics } = parseMappings(examples);
-    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+  it('lesson 3: x fixes caaat, diw removes the doubled is', () => {
+    const e = new Harness(['caaat']);
+    e.keys('faxx'); // onto the first a, delete two
+    expect(e.line).toBe('cat');
+    const dup = lineWith('sky is is blue');
+    const e2 = new Harness([dup], 0, dup.indexOf('is is'));
+    e2.keys('diw');
+    expect(e2.line).not.toMatch(/is is/);
   });
 
-  // The commands each page teaches, run against the real engine. One
-  // representative claim per page section — if a page's advice stops being
-  // true, the matching assertion here should break.
-  it('insert page: ga appends at end of line, go opens a bullet above', () => {
-    const e = new Harness(['hello']);
-    e.keys('ga');
+  it('lesson 4: cw on the wrong word enters insert mode, backtick fixes aNGRY', () => {
+    const line = lineWith('sky is green');
+    const e = new Harness([line], 0, line.indexOf('green'));
+    e.keys('cw');
     expect(e.mode).toBe('insert');
-    expect(e.caret).toBe(5);
-    const e2 = new Harness(['world']);
-    e2.keys('go');
-    expect(e2.lines).toEqual(['', 'world']);
-    expect(e2.mode).toBe('insert');
+    expect(e.line).not.toContain('green');
+    const e2 = new Harness(['aNGRY']);
+    e2.keys('`');
+    expect(e2.line).toBe('ANGRY');
   });
 
-  it('motions page: gl/gh/f/gf/, behave as described', () => {
-    const e = new Harness(['  abcabc'], 0, 4);
-    e.keys('gl');
-    expect(e.caret).toBe(8);
-    e.keys('gh');
-    expect(e.caret).toBe(2);
-    e.keys('fb'); // onto the next b
-    expect(e.caret).toBe(3);
-    e.keys('fb'); // and the one after
-    expect(e.caret).toBe(6);
-    e.keys(','); // repeat reversed: back to the previous b
-    expect(e.caret).toBe(3);
-    e.keys('gl');
-    e.keys('gfb'); // gf = backward find, landing ON the char
-    expect(e.caret).toBe(6);
+  it('lesson 5: 3x clears xxxhello, dw . . clears the three colors only', () => {
+    const e = new Harness(['xxxhello']);
+    e.keys('3x');
+    expect(e.line).toBe('hello');
+    const line = lineWith('red green blue');
+    const e2 = new Harness([line], 0, line.indexOf('red'));
+    e2.keys('dw..');
+    expect(e2.line).toContain('keep the rest');
+    expect(e2.line).not.toMatch(/red|green|blue/);
   });
 
-  it('editing page: dib deletes inside parens, counts multiply (3x, 2dw)', () => {
-    const e = new Harness(['foo (bar baz) qux'], 0, 7);
-    e.keys('dib');
-    expect(e.line).toBe('foo () qux');
-    const e2 = new Harness(['abcdef']);
-    e2.keys('3x');
-    expect(e2.line).toBe('def');
-    const e3 = new Harness(['one two three four']);
-    e3.keys('2dw');
-    expect(e3.line).toBe('three four');
-  });
-
-  it('editing page: backtick toggles case, gj joins, . repeats', () => {
-    const e = new Harness(['abc']);
-    e.keys('`');
-    expect(e.line).toBe('Abc');
-    const e2 = new Harness(['a', 'b']);
-    e2.keys('gj');
-    expect(e2.lines).toEqual(['a b']);
-    const e3 = new Harness(['xxab']);
-    e3.keys('x.');
-    expect(e3.line).toBe('ab');
-  });
-
-  it('visual page: gs9 wraps in parens, backtick toggles the selection', () => {
-    const e = new Harness(['abc']);
-    e.keys('vllgs9');
-    expect(e.line).toBe('(abc)');
-    const e2 = new Harness(['abc']);
-    e2.keys('vll`');
-    expect(e2.line).toBe('ABC');
-  });
-
-  it('visual-line page: . and , indent/outdent the selection', () => {
-    const e = new Harness(['a', 'b'], 0, 0);
-    e.keys('vvj.');
-    expect(e.indents).toEqual([1, 1]);
-    e.keys('vvj,');
-    expect(e.indents).toEqual([0, 0]);
-  });
-
-  it('command-line page: :10 goes to the adapter as a goto-line command', () => {
-    const e = new Harness(['a']);
-    e.keys(';10<cr>');
-    expect(e.lastEx).toBe('10');
-  });
-
-  it('search page: space/n/z work as described', () => {
-    const e = new Harness(['foo', 'bar', 'foo tail']);
-    e.keys('<space>foo<cr>');
-    expect(e.row).toBe(2);
+  it('lesson 6: space-search lands in the lesson line first, n finds the bottom needle', () => {
+    const lesson = lineWith('press n to chase');
+    // the promise "n chases the bottom one" only holds if the lesson line
+    // mentions the pattern exactly once
+    expect(lesson.match(/needle/g)).toHaveLength(1);
+    const from = texts.indexOf(lesson);
+    const e = new Harness(texts, from, 0);
+    e.keys('<space>needle<cr>');
+    expect(e.row).toBe(from); // the mention inside the lesson line itself
+    e.keys('n');
+    expect(e.row).toBe(texts.length - 1); // the hidden one at the bottom
     e.keys('z');
-    expect(e.row).toBe(0);
+    expect(e.row).toBe(from);
+  });
+
+  it('lesson 8: v + e + gs9 wraps important in parens; vv j . indents both practice bullets', () => {
+    const line = lineWith('important with v');
+    const e = new Harness([line], 0, line.indexOf('important'));
+    e.keys('vegs9');
+    expect(e.line).toContain('(important)');
+    const row = texts.indexOf(lineWith('then . to indent both'));
+    const e2 = new Harness(texts, row, 0);
+    e2.keys('vvj.');
+    expect(e2.indents[row]).toBe(1);
+    expect(e2.indents[row + 1]).toBe(1);
+    e2.keys('vvj,');
+    expect(e2.indents[row]).toBe(0);
+  });
+
+  it('lesson 9: the ;s practice line submits the substitute it promises', () => {
+    const line = lineWith('this line is bad');
+    const e = new Harness([line]);
+    e.keys(';s/bad/good/<cr>');
+    expect(e.lastEx).toBe('s/bad/good/');
+  });
+
+  it('lesson 10: the mapping examples it quotes parse cleanly', () => {
+    const line = lineWith(':config opens');
+    expect(line).toContain('nmap - $');
+    expect(line).toContain('unmap ,');
+    const { diagnostics } = parseMappings(['nmap - $', 'unmap ,']);
+    expect(diagnostics).toEqual([]);
   });
 });
 
-describe('tutorial gating (real onActivate on the fake plugin)', () => {
+describe('tutorial document lifecycle (real adapter, fake plugin)', () => {
+  async function boot() {
+    const world = new FakeWorld();
+    const scratch = world.makeRem(['scratch note']);
+    world.focusedRemId = scratch._id;
+    world.paneDocId = scratch._id;
+    world.text = 'scratch note';
+    const adapter = new VimAdapter(world.plugin as never);
+    await adapter.start('normal');
+    await drain(adapter);
+    return { world, adapter };
+  }
+  const tutorialDoc = (world: FakeWorld) =>
+    [...world.rems.values()].find((r) => r.text.join('') === TUTORIAL_DOC_NAME);
+
+  it('first open creates, seeds and pins the document, then opens it', async () => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    const doc = tutorialDoc(world);
+    expect(doc).toBeDefined();
+    expect(doc!.isDocument).toBe(true);
+    expect(world.storage.get('vim-tutorial-doc-id')).toBe(doc!._id);
+    expect(world.openedRemIds).toContain(doc!._id);
+    // top-level children = the indent-0 lines, in order
+    const tops = await doc!.getChildrenRem();
+    const wantTops = TUTORIAL_LINES.filter((l) => l.indent === 0);
+    expect(tops.map((r) => r.text.join(''))).toEqual(wantTops.map((l) => l.text));
+    // nested lines hang under their preceding indent-0 line
+    const lesson0kids = await tops[0].getChildrenRem();
+    expect(lesson0kids.map((r) => r.text.join(''))).toEqual(
+      [TUTORIAL_LINES[1], TUTORIAL_LINES[2], TUTORIAL_LINES[3]].map((l) => l.text)
+    );
+  });
+
+  it('reopening does not create a second copy', async () => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    const remCount = world.rems.size;
+    await adapter.openTutorial();
+    expect(world.rems.size).toBe(remCount);
+    expect(world.openedRemIds.filter((id) => id === tutorialDoc(world)!._id)).toHaveLength(2);
+  });
+
+  it('a deleted document is re-seeded fresh on the next open', async () => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    const first = tutorialDoc(world)!;
+    world.rems.delete(first._id); // user deleted the doc (children orphaned)
+    await adapter.openTutorial();
+    const second = tutorialDoc(world)!;
+    expect(second._id).not.toBe(first._id);
+    expect(world.storage.get('vim-tutorial-doc-id')).toBe(second._id);
+  });
+
+  it(':tutorial typed on the command line opens it', async () => {
+    const { world, adapter } = await boot();
+    for (const spec of [';', 't', 'u', 't', 'o', 'r', 'i', 'a', 'l', 'enter']) {
+      world.stealKey(spec);
+    }
+    await drain(adapter);
+    expect(tutorialDoc(world)).toBeDefined();
+    expect(world.openedRemIds).toContain(tutorialDoc(world)!._id);
+  });
+});
+
+describe('first-activation gating (real onActivate)', () => {
   async function activate(world: FakeWorld) {
-    // index.tsx assigns window.__vim at the end of onActivate; vitest's node
-    // environment has no window global.
     (globalThis as { window?: unknown }).window ??= globalThis;
     await import('../src/widgets/index');
     await __stub.onActivate!(world.plugin);
   }
-  const tutorialOpens = (world: FakeWorld) =>
-    world.floatingOpens.filter((args) => args[0] === 'vim_tutorial');
+  const tutorialDoc = (world: FakeWorld) =>
+    [...world.rems.values()].find((r) => r.text.join('') === TUTORIAL_DOC_NAME);
 
-  it('first activation (no seen flag) auto-opens the tutorial, click-outside-closable', async () => {
+  it('first activation seeds + opens the tutorial and sets the seen flag', async () => {
     const world = new FakeWorld();
-    await activate(world); // openTutorial is awaited inside onActivate — no queue to drain
-    const opens = tutorialOpens(world);
-    expect(opens).toHaveLength(1);
-    expect(opens[0][3]).toBe(true); // closeWhenClickOutside
+    await activate(world);
+    expect(tutorialDoc(world)).toBeDefined();
+    expect(world.openedRemIds).toContain(tutorialDoc(world)!._id);
+    expect(world.storage.get('vim-tutorial-seen')).toBe(true);
     expect(world.commands.has('vim-tutorial')).toBe(true);
   });
 
-  it('activation with the seen flag set does not auto-open', async () => {
+  it('an activation with the seen flag set does not create or open anything', async () => {
     const world = new FakeWorld();
     world.storage.set('vim-tutorial-seen', true);
     await activate(world);
-    expect(tutorialOpens(world)).toHaveLength(0);
+    expect(tutorialDoc(world)).toBeUndefined();
+    expect(world.openedRemIds).toHaveLength(0);
   });
 
-  it('the palette command opens it, and re-running it does not stack a second window', async () => {
+  it('the palette command reopens the same document afterward', async () => {
     const world = new FakeWorld();
-    world.storage.set('vim-tutorial-seen', true);
     await activate(world);
+    const doc = tutorialDoc(world)!;
     await world.commands.get('vim-tutorial')!.action();
-    expect(tutorialOpens(world)).toHaveLength(1);
-    await world.commands.get('vim-tutorial')!.action(); // still open → no-op
-    expect(tutorialOpens(world)).toHaveLength(1);
-    world.openFloating.clear(); // simulate the user closing it
-    await world.commands.get('vim-tutorial')!.action();
-    expect(tutorialOpens(world)).toHaveLength(2); // reopens after close
+    expect(world.openedRemIds.filter((id) => id === doc._id)).toHaveLength(2);
+    expect([...world.rems.values()].filter((r) => r.text.join('') === TUTORIAL_DOC_NAME)).toHaveLength(1);
   });
 });

@@ -6,6 +6,7 @@ import {
   SelectionType,
 } from '@remnote/plugin-sdk';
 import { handleKey, initialState } from '../engine/engine';
+import { TUTORIAL_DOC_NAME, TUTORIAL_LINES } from './tutorialDoc';
 import { stopsBetween } from '../engine/motions';
 import { Action, Mode, Snapshot, VimState } from '../engine/types';
 import { hostDocument, readDomCaret, setDomCaret } from './domCaret';
@@ -159,6 +160,8 @@ export class VimAdapter {
   private specToSym: Record<string, string> = specToSymTable(emptyConfig());
   /** The config document's rem id (pinned in synced storage). */
   private configRemId: string | null = null;
+  /** The tutorial document's rem id (pinned in synced storage, like config). */
+  private tutorialRemId: string | null = null;
   /** Focus tracking: was the previous focus inside the config doc? A true→
    * false transition means the user finished editing it — reload. */
   private focusInConfig = false;
@@ -1430,6 +1433,10 @@ export class VimAdapter {
       case 'config':
         await this.openConfig();
         return;
+      case 'tutorial':
+      case 'vimtutor':
+        await this.openTutorial();
+        return;
       case 'map':
         await this.listMappings();
         return;
@@ -1770,6 +1777,7 @@ export class VimAdapter {
     { verb: 'y', hint: 'yank bullet(s)', arg: 'none' },
     { verb: 'marks', hint: 'list marks', arg: 'none' },
     { verb: 'config', hint: 'edit custom keybindings', arg: 'none' },
+    { verb: 'tutorial', hint: 'open the practice document', arg: 'none' },
     { verb: 'map', hint: 'list key mappings + issues', arg: 'none' },
     { verb: 'mapload', hint: 'reload keybindings', arg: 'none' },
     { verb: 'vs', hint: 'vertical split [document]', arg: 'rem' },
@@ -2063,6 +2071,72 @@ export class VimAdapter {
     // applies the edits even if no FocusedRemChange fired for the way in.
     this.focusInConfig = true;
     await this.recordJump(); // :config is a jump — Ctrl-O returns
+    await this.plugin.window.openRem(doc);
+  }
+
+  // ------------------------------------------------- tutorial (:tutorial)
+
+  private static readonly TUTORIAL_ID_KEY = 'vim-tutorial-doc-id';
+
+  /** Resolve the tutorial document: pinned id first, then title search —
+   * the exact `findConfigDoc` dance, for the practice document. */
+  private async findTutorialDoc(): Promise<RemObj | null> {
+    const storedId =
+      this.tutorialRemId ??
+      (await this.plugin.storage.getSynced<string>(VimAdapter.TUTORIAL_ID_KEY)) ??
+      null;
+    if (storedId) {
+      const doc = await this.plugin.rem.findOne(storedId);
+      if (doc) {
+        this.tutorialRemId = storedId;
+        return doc;
+      }
+    }
+    const byName = await this.plugin.rem.findByName([TUTORIAL_DOC_NAME], null);
+    if (byName) {
+      this.tutorialRemId = byName._id;
+      await this.plugin.storage.setSynced(VimAdapter.TUTORIAL_ID_KEY, byName._id);
+      return byName;
+    }
+    this.tutorialRemId = null;
+    return null;
+  }
+
+  /**
+   * `:tutorial` — open the practice document, creating + seeding it from
+   * `TUTORIAL_LINES` on first use (vimtutor's model: lessons are ordinary
+   * bullets, practiced in place with the real bindings — the document is the
+   * user's to edit or wreck; deleting it entirely just makes the next
+   * `:tutorial` seed a fresh copy). Public: also the "Vim: Tutorial" palette
+   * command and the one-time first-activation auto-open (index.tsx).
+   */
+  async openTutorial() {
+    let doc = await this.findTutorialDoc();
+    if (!doc) {
+      const created = await this.plugin.rem.createRem();
+      if (!created) {
+        await this.plugin.app.toast(`Could not create the "${TUTORIAL_DOC_NAME}" document`);
+        return;
+      }
+      await created.setText([TUTORIAL_DOC_NAME]);
+      await created.setIsDocument(true);
+      // Seed with one parent stack: indent 0 hangs off the doc, indent 1 off
+      // the most recent indent-0 bullet. Positions count per parent.
+      let lastTop: string | null = null;
+      const pos: Record<string, number> = {};
+      for (const line of TUTORIAL_LINES) {
+        const kid = await this.plugin.rem.createRem();
+        if (!kid) continue;
+        const parentId = line.indent === 1 && lastTop ? lastTop : created._id;
+        await kid.setParent(parentId, (pos[parentId] = (pos[parentId] ?? -1) + 1));
+        await kid.setText([line.text]);
+        if (line.indent === 0) lastTop = kid._id;
+      }
+      this.tutorialRemId = created._id;
+      await this.plugin.storage.setSynced(VimAdapter.TUTORIAL_ID_KEY, created._id);
+      doc = created;
+    }
+    await this.recordJump(); // :tutorial is a jump — Ctrl-O returns
     await this.plugin.window.openRem(doc);
   }
 

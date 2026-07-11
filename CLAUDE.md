@@ -87,14 +87,17 @@ keystroke → adapter (RemNote-facing) → engine (pure) → Action[] → adapte
 - **`src/widgets/`** — plugin entry point (`index.tsx`'s `onActivate`,
   registers the `vim-toggle`/`vim-help`/`vim-config`/`vim-tutorial` commands
   and the `start-in-normal` setting, constructs the one `VimAdapter`, exposes
-  `window.__vim` for e2e), the `:help` cheat-sheet floating widget
-  (`vim_help.tsx`), and the getting-started tutorial (`vim_tutorial.tsx`, a
-  linear multi-step walkthrough opened once automatically on first
-  activation — tracked via `plugin.storage.setSynced('vim-tutorial-seen',
-  true)` — and reachable afterward via the `vim-tutorial` command). Both
-  floating widgets share the same focus trick: they grab real DOM focus on
-  mount so plain `onKeyDown` handles their own navigation/scrolling, with no
-  `stealKeys` involved.
+  `window.__vim` for e2e) and the `:help` cheat-sheet floating widget
+  (`vim_help.tsx` — grabs real DOM focus on mount so plain `onKeyDown`
+  handles its scrolling, no `stealKeys`). The getting-started tutorial is
+  NOT a widget: it's a seeded **"Vim Tutorial" practice document** (vimtutor
+  model — lessons are real bullets edited with the real bindings), content
+  in `src/adapter/tutorialDoc.ts` (SDK-free, so tests verify every practice
+  line's claim against the Harness), lifecycle in `VimAdapter.openTutorial`
+  (create + seed once, id pinned in synced storage like the `:config` doc,
+  `:tutorial`/`:vimtutor`/palette command reopen it, deleting it re-seeds).
+  Auto-opened once on first activation, gated on the `vim-tutorial-seen`
+  synced flag set in `index.tsx` after a successful open.
 - **`tests/harness.ts`** — `Harness`, a fake multi-line/multi-indent editor
   (`lines`/`indents`/`row`/`caret` arrays) that executes `Action`s the same way
   the real adapter does. Every new `Action` variant needs an implementation

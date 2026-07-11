@@ -15,6 +15,42 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-11 (later) — tutorial REBUILT as a practice document (vimtutor model), on main
+
+User verdict on the floating-widget walkthrough merged hours earlier: a
+tutorial you can't type into misses the point — rebuilt as a seeded
+**"Vim Tutorial" document** the user edits with the real bindings.
+`vim_tutorial.tsx` deleted; content now in `src/adapter/tutorialDoc.ts`
+(SDK-free, 11 lessons + practice lines), lifecycle in
+`VimAdapter.openTutorial` — an exact sibling of the `:config` doc dance
+(pinned synced-storage id, findByName recovery, create+seed on miss,
+recordJump before openRem, so Ctrl-O returns). New Ex verbs
+`:tutorial`/`:vimtutor` + wildmenu entry; palette command + first-activation
+auto-open (flag set in index.tsx only after a successful open) now call the
+same method. Deleting the doc is supported-by-design: next open re-seeds.
+
+**The content-honesty suite is the interesting part**
+(`tests/tutorial.test.ts`, 17 tests): every practice line's claim executes
+against the Harness ON THE LINE'S OWN TEXT, which caught four dishonest
+drafts before they shipped — `space needle` couldn't reach the bottom
+because the lesson sentence mentioned needle twice (the engine finds the
+in-line match first), an `fr` hint that actually lands on the r of
+"Practice", and two ambiguous-substring test anchors. L3 covers
+create/seed/pin/reopen/re-seed-after-delete/`;tutorial` typed live, plus
+onActivate gating. Suite 651/651.
+
+**Live (e2e scratch vault): `e2e/tutorial.mjs` (rewritten) 8/8** — reset →
+openTutorial seeds+pins+opens; a real practice pass (space-search jumps to
+the caaat exercise, `fa xx` fixes it to cat in the document); `;tutorial`
+typed through the command line reopens the same doc, no duplicate; plus a
+separate app-relaunch check: activation with the flag clear auto-opens the
+pinned doc and flips the flag. `run.mjs` 16/16 after. **New platform
+lesson:** reloading RemNote's main window over CDP (`Page.reload` or
+playwright `page.reload`) makes the Electron app EXIT (observed twice) —
+e2e that needs a fresh activation must relaunch the process instead;
+`e2e/tutorial.mjs` documents this and leaves the reload-dependent branch to
+the runner.
+
 ### 2026-07-11 — tutorial reviewed, tested, live-verified 10/10, MERGED to main
 
 Review + test pass over `feature/onboarding-tutorial` (the entry below).
@@ -2320,12 +2356,19 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Cursor visibility** — cursorline row tint + colored left caret bar
   outside insert mode.
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
-- **Getting-started tutorial** — a 14-page walkthrough (`vim_tutorial.tsx`)
-  opens automatically once, on first activation (`vim-tutorial-seen` synced
-  storage flag), and afterward via **"Vim: Tutorial"**. Live-verified
-  2026-07-11 (`e2e/tutorial.mjs` 10/10: auto-open, full keyboard page-walk,
-  Enter/Escape close, seen-flag persistence across an app reload); unit
-  coverage in `tests/tutorial.test.ts` — see the 2026-07-11 §0 entry.
+- **Getting-started tutorial** — a seeded **"Vim Tutorial" practice
+  document** (vimtutor model: 11 lessons as real bullets, every command
+  practiced in place with the real bindings; content in
+  `src/adapter/tutorialDoc.ts`, lifecycle mirrors the `:config` doc — id
+  pinned in synced storage, deleting the doc re-seeds fresh). Auto-opens
+  once on first activation (`vim-tutorial-seen` flag), reopens via
+  `:tutorial`/`:vimtutor`/**"Vim: Tutorial"**. Live-verified 2026-07-11
+  (`e2e/tutorial.mjs` 8/8 incl. fixing the caaat exercise with real keys +
+  a separate relaunch check of the auto-open branch); unit coverage in
+  `tests/tutorial.test.ts` (every practice line's claim runs against the
+  Harness on the line's own text) — see the 2026-07-11 §0 entries. The
+  first floating-widget version was replaced the same day (user: a
+  walkthrough you can't type into misses the point of vim).
 
 Known limitations (beyond §9 platform blockers):
 
