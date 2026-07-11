@@ -83,11 +83,9 @@ export function diffCaret(pre: string, fresh: string, fallback: number): number 
 
 /**
  * Wrap `idx` by `dir` steps within `[0, len)`, vim tab-cycle style: past the
- * last index comes back to 0, before 0 comes back to the last. Shared by
- * pane-cycling (`gt`/`gp`, Ctrl-W h/l) and move-pane (`gm` h/l), which both
- * need "the next/previous slot in a flat, wraparound order" and differ only
- * in what they do with the resulting index. Returns `idx` unchanged when
- * `len` is 0 (nothing to wrap into).
+ * last index comes back to 0, before 0 comes back to the last. Used by
+ * pane-focus cycling (Ctrl-H/Ctrl-L, Ctrl-W h/l) via `cyclePaneId` below.
+ * Returns `idx` unchanged when `len` is 0 (nothing to wrap into).
  */
 export function wrapIndex(len: number, idx: number, dir: -1 | 1): number {
   if (len <= 0) return idx;

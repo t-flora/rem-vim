@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Live probe for the 2026-07 feature batch: space-search (+ n/z repeat),
 // :N goto-line, gf backward find, visual case toggle (backtick), gs visual
-// surround, and the gn/gc pane chords. Same harness conventions as run.mjs
+// surround, and :vs/:q pane management. Same harness conventions as run.mjs
 // (single narrative in today's Daily Document, badge-counter idle waits,
 // read-only assertions through the in-page data API).
 import { chromium } from 'playwright-core';
+import WebSocket from 'ws';
 import { resolveDailyDocId } from './docid.mjs';
 
 const PORT = process.env.REMNOTE_CDP_PORT ?? '9222';
@@ -88,41 +89,57 @@ async function readOwn() {
   });
 }
 
-// A fresh launch can restore the Daily Document INDEX page instead of
-// today's note (run.mjs assumes the note is already open). If the resolved
-// doc's title isn't date-shaped, find today's title rem in the index DOM and
-// navigate to it via the bare-id URL form (/w/<kb>/<remId>).
+// A fresh launch restores whatever page was last open (run.mjs assumes
+// today's daily note already is). If the open page's title isn't
+// date-shaped, open today's doc through the PLUGIN API — the main page has
+// no route to it (the sidebar may not even be in the DOM), but the plugin's
+// index iframe does: it's a cross-origin OOPIF playwright can't
+// frame-attach to, reached over raw CDP instead (own /json/list target).
+// A scratch KB may have no daily note for today at all (RemNote creates it
+// on visiting the daily view) — then a plain document with today's title is
+// created: resolveDailyDocId accepts any date-shaped title.
+async function pluginEval(expr) {
+  const targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+  const t = targets.find((x) => x.url.includes('widgetName=index'));
+  if (!t) throw new Error('plugin index iframe target not found');
+  const sock = new WebSocket(t.webSocketDebuggerUrl, { perMessageDeflate: false });
+  await new Promise((res) => sock.on('open', res));
+  const reply = new Promise((res) => sock.on('message', (d) => {
+    const m = JSON.parse(d);
+    if (m.id === 1) res(m);
+  }));
+  sock.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true } }));
+  const r = await reply;
+  sock.close();
+  if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.text);
+  return r.result?.result?.value;
+}
 async function ensureTodayOpen() {
-  const nav = await page.evaluate(() => {
-    const d = new Date();
-    const day = d.getDate();
-    const suffix =
-      day % 10 === 1 && day !== 11 ? 'st'
-      : day % 10 === 2 && day !== 12 ? 'nd'
-      : day % 10 === 3 && day !== 13 ? 'rd'
-      : 'th';
-    const title = `${d.toLocaleString('en-US', { month: 'long' })} ${day}${suffix}, ${d.getFullYear()}`;
+  const onDatePage = await page.evaluate(() => {
     const href = decodeURIComponent(location.href);
     const tail = href.match(/-([A-Za-z0-9]+)$/)?.[1] ?? href.split('/').pop();
     try {
       const cur = window.Rem(window.CURRENT_KNOWLEDGE_BASE).findOne(tail);
       const text = (cur?.key ?? []).map((x) => (typeof x === 'string' ? x : '')).join('');
-      if (text === title) return { ok: true };
-    } catch { /* not a rem — fall through to navigation */ }
-    for (const el of document.querySelectorAll('[data-rem-id]')) {
-      // index rows can carry decorations around the title ("1July 10th, …")
-      if (el.textContent.replace(/[  ​]/g, ' ').includes(title)) {
-        const id = el.getAttribute('data-rem-id');
-        // works for both http and the packaged file:// URL form: the last
-        // path segment is the open rem's id (bare-id form)
-        location.href = location.href.replace(/[^/]+$/, id);
-        return { ok: true, navigated: true };
-      }
-    }
-    return { ok: false, title };
+      return /[A-Z][a-z]+ \d+(st|nd|rd|th), \d{4}/.test(text);
+    } catch { return false; }
   });
-  if (!nav.ok) { console.error(`✗ Could not find today's daily note ("${nav.title}") to open.`); process.exit(2); }
-  if (nav.navigated) { console.log('· navigated to today\'s daily note'); await wait(2500); }
+  if (onDatePage) return;
+  await pluginEval(`(async () => {
+    const p = window.__vim.plugin;
+    let d = await p.date.getTodaysDoc();
+    if (!d) {
+      const day = new Date().getDate();
+      const suffix = day % 10 === 1 && day !== 11 ? 'st' : day % 10 === 2 && day !== 12 ? 'nd' : day % 10 === 3 && day !== 13 ? 'rd' : 'th';
+      const title = new Date().toLocaleString('en-US', { month: 'long' }) + ' ' + day + suffix + ', ' + new Date().getFullYear();
+      d = await p.rem.createRem();
+      await d.setText([title]);
+      await d.setIsDocument(true);
+    }
+    await p.window.openRem(d);
+  })()`);
+  console.log("· opened today's daily note via the plugin API");
+  await wait(2500);
 }
 await ensureTodayOpen();
 
@@ -138,21 +155,35 @@ function check(label, got, want) {
 }
 
 // Focus the first bullet of the daily doc (same click dance as run.mjs).
-const first = await page.evaluate((docId) => {
-  for (const c of document.querySelectorAll('.EditorContainer')) {
-    const id = c.closest('[data-rem-id]')?.getAttribute('data-rem-id');
-    if (!id) continue;
-    let cur = window.Rem(window.CURRENT_KNOWLEDGE_BASE).findOne(id);
-    for (let hop = 0; cur && hop < 12; hop++) {
-      if (cur._id === docId || cur.parent === docId) {
-        const r = c.getBoundingClientRect();
-        if (r.width || r.height) return { x: r.x + Math.min(25, r.width / 2 + 5), y: r.y + r.height / 2 };
+// A just-created daily note is empty — seed one bullet via the plugin API
+// so there is something to click into (the probe builds its own fixtures).
+const findFirstBullet = () =>
+  page.evaluate((docId) => {
+    for (const c of document.querySelectorAll('.EditorContainer')) {
+      const id = c.closest('[data-rem-id]')?.getAttribute('data-rem-id');
+      if (!id) continue;
+      let cur = window.Rem(window.CURRENT_KNOWLEDGE_BASE).findOne(id);
+      for (let hop = 0; cur && hop < 12; hop++) {
+        if (cur._id === docId || cur.parent === docId) {
+          const r = c.getBoundingClientRect();
+          if (r.width || r.height) return { x: r.x + Math.min(25, r.width / 2 + 5), y: r.y + r.height / 2 };
+        }
+        cur = window.Rem(window.CURRENT_KNOWLEDGE_BASE).findOne(cur.parent);
       }
-      cur = window.Rem(window.CURRENT_KNOWLEDGE_BASE).findOne(cur.parent);
     }
-  }
-  return null;
-}, DOC_ID);
+    return null;
+  }, DOC_ID);
+let first = await findFirstBullet();
+if (!first) {
+  await pluginEval(`(async () => {
+    const p = window.__vim.plugin;
+    const kid = await p.rem.createRem();
+    await kid.setParent('${DOC_ID}', 0);
+    await kid.setText(['probe scratch']);
+  })()`);
+  await wait(2000);
+  first = await findFirstBullet();
+}
 if (!first) { console.error('✗ No bullet found in the daily doc to focus.'); process.exit(2); }
 // A freshly launched window can swallow the first synthetic clicks even
 // after bringToFront — click until a rem actually reports focused.
@@ -238,17 +269,18 @@ await keys('0vglgs9');
 check('gs9 wraps the selection in parens', await readOwn(), '(ABCac)');
 check('back in NORMAL after surround', await mode(), 'NORMAL');
 
-// ---- pane chords ----
-console.log('· pane chords gn/gt/gc');
+// ---- panes (the gt/gp/gn/gc/gm chords were removed as redundant aliases;
+// :vs/:q are the canonical bindings, Ctrl-H/Ctrl-L cycle focus) ----
+console.log('· panes :vs/:q');
 const paneSplit = () => page.evaluate(() => /\)_\(/.test(location.hash + location.pathname + location.search + location.href));
 const before = await paneSplit();
-await keys('gn');
+await keys(';vs<cr>');
 await wait(800);
 const afterSplit = await paneSplit();
-check('gn opens a split pane', !before && afterSplit, true);
-await keys('gc');
+check(':vs opens a split pane', !before && afterSplit, true);
+await keys(';q<cr>');
 await wait(800);
-check('gc closes it again', await paneSplit(), false);
+check(':q closes it again', await paneSplit(), false);
 
 console.log(`\nRESULT: ${pass}/${pass + fail} live checks passed`);
 process.exit(fail ? 1 : 0);

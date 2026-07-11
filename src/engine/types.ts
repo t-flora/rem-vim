@@ -80,16 +80,6 @@ export type Action =
   | { t: 'runEx'; cmd: string }
   /** Focus the previous (-1) or next (+1) pane (Ctrl-W h / Ctrl-W l). */
   | { t: 'focusPane'; dir: -1 | 1 }
-  /**
-   * `gm` then `h`/`l`: swap the focused pane with its previous (-1) or next
-   * (+1) neighbor in the SAME flat cycle order `focusPane`/`gt`/`gp` walk
-   * (`getOpenPaneIds()`'s order — panes are actually a tree, not a list, so
-   * "left"/"right" here means "one step earlier/later in that flat order",
-   * not a literal tree-geometry move). Best-effort: a hand-arranged 3+ pane
-   * layout gets rebuilt flat (see `setPaneTree`), so nesting/ratios are not
-   * preserved — same documented tradeoff `:vs`/`:sp`/`:q` already make.
-   */
-  | { t: 'movePane'; dir: -1 | 1 }
   /** Jumplist navigation: Ctrl-O (back, -1) / Ctrl-I (forward, +1). */
   | { t: 'jump'; dir: -1 | 1 }
   /** `m<c>`: remember the focused Rem under a single-char mark name. */
@@ -140,8 +130,6 @@ export type Pending =
   | { p: 'textobj'; key: 'i' | 'a' }
   /** Ctrl-W pressed; waiting for the pane-direction key (h/l/w). */
   | { p: 'pane' }
-  /** `gm` pressed; waiting for h (move pane left/earlier) or l (right/later). */
-  | { p: 'movePane' }
   /** `m` pressed; waiting for the mark name. */
   | { p: 'mark' }
   /** `'` pressed; waiting for the mark name to jump to. */

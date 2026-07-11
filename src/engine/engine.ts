@@ -393,27 +393,11 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
         return reset(state, [{ t: 'scroll', dir: 1, count: PAGE }]);
       case 'u': // gu → Ctrl-U (half page up)
         return reset(state, [{ t: 'scroll', dir: -1, count: PAGE }]);
-      // --- pane ("tab") management, normal-mode only. RemNote has no tab
-      // data structure, only split panes (a tree) — these are cycle/manage
-      // commands layered on the pane primitives `:vs`/`:sp`/`:q` already use.
-      // gg/ge/gl/gh/go/ga/gj/gd/gu (above) plus gf/gs (sibling branches) were
-      // taken, so: gt/gp mirror vim's tab-next/tab-prev mnemonic directly;
-      // gn/gc read as new/close; gm ("move") waits for a further h/l for
-      // direction, the same nested-pending shape Ctrl-W already uses for
-      // pane-focus (`pending.p === 'pane'` below).
-      case 't': // gt → next pane (vim tab-next mnemonic)
-        return reset(state, [{ t: 'focusPane', dir: 1 }]);
-      case 'p': // gp → previous pane (vim tab-prev mnemonic; ggt was rejected
-        // because gg already fires on the second g — see engine.test.ts)
-        return reset(state, [{ t: 'focusPane', dir: -1 }]);
-      case 'n': // gn → new pane: vertical split of the current doc, same as
-        // `:vs` with no argument (reuses runEx's splitPane path verbatim).
-        return reset(state, [{ t: 'runEx', cmd: 'vs' }]);
-      case 'c': // gc → close the focused pane, same as `:q` (reuses runEx's
-        // closePane path verbatim).
-        return reset(state, [{ t: 'runEx', cmd: 'q' }]);
-      case 'm': // gm → move pane; waits for h (left/earlier) or l (right/later)
-        return { state: { ...state, pending: { p: 'movePane' }, count: '' }, actions: [] };
+      // NOTE: a 2026-07 batch briefly bound gt/gp/gn/gc/gm to pane
+      // management; removed as redundant aliases (gt/gp = Ctrl-L/Ctrl-H,
+      // gn = :vs, gc = :q, and gm's pane-swap rebuilt hand-arranged layouts
+      // flat). Those letters are deliberately FREE again — gn especially is
+      // reserved-by-convention for vim's own "select next search match".
     }
     return reset(state);
   }
@@ -422,13 +406,6 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     const st: VimState = { ...state, pending: { p: 'none' } };
     if (key === 'h') return { state: st, actions: [{ t: 'focusPane', dir: -1 }] };
     if (key === 'l' || key === 'w') return { state: st, actions: [{ t: 'focusPane', dir: 1 }] };
-    return { state: st, actions: [] };
-  }
-
-  if (state.pending.p === 'movePane') {
-    const st: VimState = { ...state, pending: { p: 'none' } };
-    if (key === 'h') return { state: st, actions: [{ t: 'movePane', dir: -1 }] };
-    if (key === 'l') return { state: st, actions: [{ t: 'movePane', dir: 1 }] };
     return { state: st, actions: [] };
   }
 

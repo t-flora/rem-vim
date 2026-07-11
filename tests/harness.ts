@@ -38,8 +38,6 @@ export class Harness {
   jumpPos = 0;
   /** focusPane directions emitted (the adapter cycles real panes). */
   paneMoves: number[] = [];
-  /** movePane directions emitted (the adapter swaps real pane positions). */
-  paneSwaps: number[] = [];
   /** Marks: name → row (the adapter stores rem ids). */
   marks: Record<string, number> = {};
   /** The pattern from the last `search`/`searchStep` Action (adapter-owned state). */
@@ -396,11 +394,6 @@ export class Harness {
       }
       case 'focusPane':
         this.paneMoves.push(a.dir);
-        break;
-      case 'movePane':
-        // No effect on the fake editor's text/caret model — Harness has no
-        // real pane tree, just records the direction like focusPane above.
-        this.paneSwaps.push(a.dir);
         break;
       case 'setMark':
         this.marks[a.name] = this.row;

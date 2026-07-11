@@ -1043,65 +1043,22 @@ describe('panes (Ctrl-W chord, Ctrl-H/Ctrl-L direct)', () => {
   });
 });
 
-describe('pane ("tab") g-chords: gt/gp/gn/gc/gm', () => {
-  it('gt emits focusPane(+1) (next pane, vim tab-next mnemonic)', () => {
-    const e = h('x');
-    e.keys('gt');
-    expect(e.paneMoves).toEqual([1]);
+describe('gt/gp/gn/gc/gm are unbound (removed pane aliases)', () => {
+  // A 2026-07 batch bound these to pane management; removed as redundant
+  // (gt/gp = Ctrl-L/Ctrl-H, gn = :vs, gc = :q, gm's swap was lossy). Pin
+  // that they are inert g-chord cancels again, free for future commands —
+  // gn in particular is reserved-by-convention for vim's own "select next
+  // search match".
+  it.each(['gt', 'gp', 'gn', 'gc', 'gm'])('%s does nothing', (chord) => {
+    const e = h('abc');
+    e.keys(chord);
     expect(e.mode).toBe('normal');
-  });
-
-  it('gp emits focusPane(-1) (previous pane, vim tab-prev mnemonic)', () => {
-    const e = h('x');
-    e.keys('gp');
-    expect(e.paneMoves).toEqual([-1]);
-    expect(e.mode).toBe('normal');
-  });
-
-  it('gt/gp chain and stay in normal mode', () => {
-    const e = h('x');
-    e.keys('gtgtgp');
-    expect(e.paneMoves).toEqual([1, 1, -1]);
-    expect(e.mode).toBe('normal');
-  });
-
-  it('gn emits runEx("vs") — new pane, same path as :vs', () => {
-    const e = h('x');
-    e.keys('gn');
-    expect(e.lastEx).toBe('vs');
-  });
-
-  it('gc emits runEx("q") — close pane, same path as :q', () => {
-    const e = h('x');
-    e.keys('gc');
-    expect(e.lastEx).toBe('q');
-  });
-
-  it('gm then h emits movePane(-1) (move left/earlier)', () => {
-    const e = h('x');
-    e.keys('gmh');
-    expect(e.paneSwaps).toEqual([-1]);
-    expect(e.mode).toBe('normal');
-  });
-
-  it('gm then l emits movePane(+1) (move right/later)', () => {
-    const e = h('x');
-    e.keys('gml');
-    expect(e.paneSwaps).toEqual([1]);
-  });
-
-  it('gm then an unrelated key cancels with no action (only h/l complete it)', () => {
-    const e = h('x');
-    e.keys('gmx');
-    expect(e.paneSwaps).toEqual([]);
-    expect(e.mode).toBe('normal');
-  });
-
-  it('none of the pane g-chords are dot-repeatable (not DOT_MUTATING)', () => {
-    const e = h('x');
-    e.keys('gt');
-    e.keys('.');
-    expect(e.paneMoves).toEqual([1]); // the '.' did not replay a pane cycle
+    expect(e.paneMoves).toEqual([]);
+    expect(e.lastEx).toBeNull();
+    expect(e.line).toBe('abc');
+    expect(e.caret).toBe(0);
+    e.keys('l'); // the cancelled chord leaves no pending state behind
+    expect(e.caret).toBe(1);
   });
 });
 

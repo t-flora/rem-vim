@@ -180,7 +180,7 @@ describe('diffCaret (insert-exit caret inference)', () => {
   });
 });
 
-describe('wrapIndex (flat-order wraparound, gt/gp/gm)', () => {
+describe('wrapIndex (flat-order wraparound, pane focus cycling)', () => {
   it('steps forward and backward within bounds', () => {
     expect(wrapIndex(3, 0, 1)).toBe(1);
     expect(wrapIndex(3, 1, 1)).toBe(2);
@@ -205,7 +205,7 @@ describe('wrapIndex (flat-order wraparound, gt/gp/gm)', () => {
   });
 });
 
-describe('cyclePaneId (next/previous pane id, gt/gp)', () => {
+describe('cyclePaneId (next/previous pane id, Ctrl-H/Ctrl-L)', () => {
   it('returns the next id with wraparound', () => {
     expect(cyclePaneId(['a', 'b', 'c'], 'a', 1)).toBe('b');
     expect(cyclePaneId(['a', 'b', 'c'], 'c', 1)).toBe('a');

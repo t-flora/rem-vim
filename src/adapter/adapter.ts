@@ -568,7 +568,6 @@ export class VimAdapter {
       case 'jump': // the caret lands in a different rem
       case 'gotoMark': // ditto
       case 'focusPane':
-      case 'movePane': // rebuilds the pane tree; setPaneTree also re-focuses
       case 'vExtend': // the selection head physically moves the caret
       case 'yankRemSelection': // native copy parks the caret on the first line
         this.invalidateModel();
@@ -877,22 +876,6 @@ export class VimAdapter {
         if (!next) break;
         await this.plugin.window.setFocusedPaneId(next);
         this.invalidateModel();
-        break;
-      }
-
-      // `gm` then h/l — swap the focused pane with its flat-order neighbor.
-      // Reuses the exact leaf-list + rebuild machinery `:vs`/`:sp`/`:q`
-      // already use (`paneLeaves`/`setPaneTree`), so the same documented
-      // tradeoff applies: a hand-arranged 3+ pane layout is rebuilt flat
-      // along 'row', not preserved nested/ratioed.
-      case 'movePane': {
-        const { docs, focusedIdx } = await this.paneLeaves();
-        if (docs.length < 2 || docs.some((d) => !d)) break;
-        const otherIdx = wrapIndex(docs.length, focusedIdx, a.dir);
-        if (otherIdx === focusedIdx) break;
-        const leaves = [...(docs as string[])];
-        [leaves[focusedIdx], leaves[otherIdx]] = [leaves[otherIdx], leaves[focusedIdx]];
-        await this.setPaneTree(leaves, 'row', otherIdx);
         break;
       }
 

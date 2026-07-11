@@ -233,14 +233,6 @@ function VimHelp() {
             <Row keys={['Ctrl-h', 'Ctrl-l']} desc="focus previous / next pane" />
           </Section>
 
-          <Section title="Panes ('tabs')">
-            <Row keys={['g', 't']} desc="next pane  (vim tab-next mnemonic)" />
-            <Row keys={['g', 'p']} desc="previous pane  (vim tab-prev mnemonic)" />
-            <Row keys={['g', 'n']} desc="new pane  (vertical split, like :vs)" />
-            <Row keys={['g', 'c']} desc="close this pane  (like :q)" />
-            <Row keys={['g', 'm', 'h/l']} desc="move this pane left / right in the cycle order" />
-          </Section>
-
           <Section title="Marks">
             <Row keys={['m', '·']} desc="remember this bullet as mark ‘·’" />
             <Row keys={["'", '·']} desc="jump back to mark ‘·’" />

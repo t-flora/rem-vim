@@ -15,6 +15,22 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-11 (later still) — pane g-chords (`gt`/`gp`/`gn`/`gc`/`gm`) REMOVED, on main
+
+User call: they were aliases of functionality that already exists —
+`gt`/`gp` = Ctrl-L/Ctrl-H (`focusPane`), `gn` = `:vs`, `gc` = `:q` — and
+`gm h/l`'s pane-swap, the only unique piece, was best-effort-lossy (rebuilt
+hand-arranged layouts flat) and never live-verified. All five chords are
+gone, along with the whole `movePane` machinery (Action + Pending variants,
+adapter exec + updateModel cases, Harness mirror). `wrapIndex`/`cyclePaneId`
+stay (still power Ctrl-H/Ctrl-L). engine.test.ts now PINS the five chords
+as inert g-chord cancels (freed keys — `gn` especially is
+reserved-by-convention for vim's own "select next search match" if search
+ever grows operators). `:help`'s Panes section dropped, tutorial Lesson 9
+now teaches `:vs`/`:q`/Ctrl-H/L, `e2e/batch.mjs`'s pane phase switched to
+`;vs`/`;q` (re-verified live 17/17 along with `run.mjs` 16/16 and
+`tutorial.mjs` 8/8). Suite 647/647, `check-types` + build clean.
+
 ### 2026-07-11 (later) — tutorial REBUILT as a practice document (vimtutor model), on main
 
 User verdict on the floating-widget walkthrough merged hours earlier: a
@@ -2319,14 +2335,11 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   truncate-forward semantics).
 - **Panes** — `Ctrl-H`/`Ctrl-L` focus previous/next pane (the vim-classic
   `C-w h`/`C-w l` chord is also bound but a real Ctrl+W never reaches the
-  desktop app — Electron eats it; see §9). `gt`/`gp` do the same next/prev
-  cycling as unshifted g-chords (tab-next/prev mnemonic, branch
-  `feature/pane-tabs`; they ride the same `focusPane` path as the
-  live-verified Ctrl-H/Ctrl-L); `gn` new pane (`:vs`'s path) and `gc` close
-  pane (`:q`'s path) live-verified 2026-07-10 (`e2e/batch.mjs`); `gm` then
-  `h`/`l` move the focused pane left/right in that same cycle order
-  (best-effort — rebuilds the pane tree flat, same tradeoff as
-  `:vs`/`:sp`/`:q` below; NOT live-verified — needs a 3-pane layout probe).
+  desktop app — Electron eats it; see §9); `:vs`/`:sp`/`:q`/`:only` manage
+  splits. The 2026-07-10 `gt`/`gp`/`gn`/`gc`/`gm` g-chords were REMOVED
+  2026-07-11 as redundant aliases of exactly those bindings (and `gm`'s
+  pane-swap was lossy — flattened hand-arranged layouts); the letters are
+  free again, `gn` reserved-by-convention for vim's "select next match".
 - **Scrolling** — `Ctrl-D`/`Ctrl-U` (caret page-moves; view follows).
   `Ctrl-E`/`Ctrl-Y` deliberately unbound — no view-scroll API exists.
 - **Command line** — opened with `;` only (`/` now belongs to RemNote's own

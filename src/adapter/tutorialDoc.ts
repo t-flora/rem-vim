@@ -83,7 +83,7 @@ export const TUTORIAL_LINES: TutorialLine[] = [
   L('Lesson 9 — the command line'),
   c('; opens the : command line (Tab cycles completions). :help shows the full reference sheet. :10 jumps to the 10th bullet from the top. :s/old/new/ substitutes on the current bullet — flags: g every match, i ignore case, a the whole document.'),
   c('Practice: run ;s/bad/good/ on this bullet: this line is bad, truly bad.'),
-  c('Panes: :vs and :sp split, :q closes — or use the g-chords: gn new pane, gt/gp cycle, gc close, gm h/l move. Try gn then gc right now.'),
+  c('Panes: :vs and :sp split the view, :q closes a pane, :only keeps just this one; Ctrl-H and Ctrl-L move focus between panes. Try ;vs and then ;q right now.'),
 
   L('Lesson 10 — make it yours'),
   c(':config opens a "Vim Keymap" document: one mapping per bullet, vim syntax — nmap - $ maps - to end-of-line in normal mode; unmap , releases a key back to RemNote (the key side is always ONE key). :map lists what is active; edits apply when you leave that document.'),
