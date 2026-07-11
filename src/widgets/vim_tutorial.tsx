@@ -50,13 +50,14 @@ function ModeChip({ label, color }: { label: string; color: string }) {
   );
 }
 
-interface Step {
+export interface Step {
   eyebrow: string;
   title: string;
   body: React.ReactNode;
 }
 
-const STEPS: Step[] = [
+/** Exported for tests: content-accuracy checks render and validate every page. */
+export const STEPS: Step[] = [
   {
     eyebrow: 'Welcome',
     title: 'Vim Mode for RemNote',
@@ -341,7 +342,7 @@ const STEPS: Step[] = [
         <Bind keys={['nmap - $']} desc="map a key in normal mode" />
         <Bind keys={['vmap - $']} desc="map a key in visual mode" />
         <Bind keys={['map - $']} desc="map in both" />
-        <Bind keys={['unmap gt']} desc="remove a default mapping" />
+        <Bind keys={['unmap ,']} desc="release a key back to RemNote (the key side is always ONE key)" />
         <p>Mappings are noremap (no recursive expansion) and apply as soon as you leave the document, or immediately with:</p>
         <Bind keys={[':mapload']} desc="reload keybindings from the document" />
         <Bind keys={[':map']} desc="list your current mappings, plus any parse errors" />

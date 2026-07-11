@@ -94,6 +94,14 @@ export class FakeWorld {
   /** The specs RemNote would currently be stealing for us. */
   stolen = new Set<string>();
   storage = new Map<string, unknown>();
+  /** Palette commands registered via app.registerCommand, by id. */
+  commands = new Map<string, { name: string; action: () => Promise<void> }>();
+  /** Every openFloatingWidget call: [widgetName, position, classContainer, closeOnClickOutside]. */
+  floatingOpens: unknown[][] = [];
+  /** Floating widget ids currently open (openFloatingWidget adds, closeFloatingWidget removes). */
+  openFloating = new Set<string>();
+  /** Plugin settings registered/set (registerBooleanSetting defaults land here). */
+  settings = new Map<string, unknown>();
 
   // ---- rem tree
   rems = new Map<string, FakeRem>();
@@ -129,6 +137,18 @@ export class FakeWorld {
           for (const s of specs) this.stolen.delete(s);
         },
         registerCSS: async () => {},
+        registerCommand: async (opts: { id: string; name: string; action: () => Promise<void> }) => {
+          this.commands.set(opts.id, { name: opts.name, action: opts.action });
+        },
+        registerWidget: async (name: string) => {
+          this.log('app', 'registerWidget', name);
+        },
+      }),
+      settings: this.ns('settings', {
+        registerBooleanSetting: async (opts: { id: string; defaultValue?: boolean }) => {
+          if (!this.settings.has(opts.id)) this.settings.set(opts.id, opts.defaultValue ?? false);
+        },
+        getSetting: async (id: string) => this.settings.get(id),
       }),
       event: this.ns('event', {
         addListener: (event: string, key: string | undefined, cb: (args: unknown) => void) => {
@@ -158,13 +178,18 @@ export class FakeWorld {
           this.paneDocId = rem._id;
           this.focusedRemId = rem._id;
         },
-        openFloatingWidget: async () => {
-          this.log('window', 'openFloatingWidget');
-          return 'float-1';
+        openFloatingWidget: async (...args: unknown[]) => {
+          this.log('window', 'openFloatingWidget', args[0]);
+          this.floatingOpens.push(args);
+          const id = `float-${this.floatingOpens.length}`;
+          this.openFloating.add(id);
+          return id;
         },
-        closeFloatingWidget: async () => {
-          this.log('window', 'closeFloatingWidget');
+        closeFloatingWidget: async (id: string) => {
+          this.log('window', 'closeFloatingWidget', id);
+          this.openFloating.delete(id);
         },
+        isFloatingWidgetOpen: async (id: string) => this.openFloating.has(id),
       }),
       search: this.ns('search', {
         search: async () => [],
