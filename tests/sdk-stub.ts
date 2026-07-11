@@ -23,3 +23,37 @@ export const SelectionType = {
   Text: 'Text',
   Rem: 'Rem',
 } as const;
+
+export const WidgetLocation = {
+  FloatingWidget: 'FloatingWidget',
+} as const;
+
+/**
+ * Widget-module support (index.tsx / vim_tutorial.tsx / vim_help.tsx import
+ * these as VALUES, and renderWidget/declareIndexPlugin run at module scope).
+ * The stubs record instead of rendering so tests can reach the component
+ * function and the activate/deactivate callbacks directly.
+ */
+export const __stub = {
+  renderedWidget: null as null | ((...args: never[]) => unknown),
+  onActivate: null as null | ((plugin: unknown) => Promise<void>),
+  onDeactivate: null as null | ((plugin: unknown) => Promise<void>),
+  /** What usePlugin() returns inside a component under test. */
+  pluginForHooks: null as unknown,
+};
+
+export function renderWidget(component: (...args: never[]) => unknown) {
+  __stub.renderedWidget = component;
+}
+
+export function declareIndexPlugin(
+  onActivate: (plugin: unknown) => Promise<void>,
+  onDeactivate: (plugin: unknown) => Promise<void>
+) {
+  __stub.onActivate = onActivate;
+  __stub.onDeactivate = onDeactivate;
+}
+
+export function usePlugin() {
+  return __stub.pluginForHooks;
+}

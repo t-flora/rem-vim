@@ -27,7 +27,10 @@ Run a single unit test file/case with Vitest directly, e.g.
 To actually see a change working: `npm run dev`, then in RemNote **Settings →
 Plugins → Build → Develop from localhost** → `http://localhost:8080/` → **Develop**,
 and toggle "Vim Mode" on. There is **no hot reload**; reload the plugin (or the
-RemNote window) after every code change to pick up new JS. A `-- NORMAL --` badge
+RemNote window) after every code change to pick up new JS. Adding a **new
+widget file** needs more: restart `npm run dev` entirely — webpack computes
+the `src/widgets/**/*.tsx` entry list once at startup, so a widget file that
+appeared later 404s on its `-sandbox.js` bundle and silently never mounts. A `-- NORMAL --` badge
 bottom-right confirms the plugin is active, and its bottom-left twin
 (`vim <mode> rx=<n> done=<n> k=<spec>`) is the debug readout — `rx` (keys
 received) staying ahead of `done` (keys fully processed) means a handler is
@@ -82,9 +85,16 @@ keystroke → adapter (RemNote-facing) → engine (pure) → Action[] → adapte
     (closed as a dead end on 1.26.30, see DEVELOPMENT.md's work log). Don't
     delete it or re-attempt enabling it without reading that history first.
 - **`src/widgets/`** — plugin entry point (`index.tsx`'s `onActivate`,
-  registers the `vim-toggle`/`vim-help` commands and the `start-in-normal`
-  setting, constructs the one `VimAdapter`, exposes `window.__vim` for e2e)
-  and the `:help` cheat-sheet floating widget (`vim_help.tsx`).
+  registers the `vim-toggle`/`vim-help`/`vim-config`/`vim-tutorial` commands
+  and the `start-in-normal` setting, constructs the one `VimAdapter`, exposes
+  `window.__vim` for e2e), the `:help` cheat-sheet floating widget
+  (`vim_help.tsx`), and the getting-started tutorial (`vim_tutorial.tsx`, a
+  linear multi-step walkthrough opened once automatically on first
+  activation — tracked via `plugin.storage.setSynced('vim-tutorial-seen',
+  true)` — and reachable afterward via the `vim-tutorial` command). Both
+  floating widgets share the same focus trick: they grab real DOM focus on
+  mount so plain `onKeyDown` handles their own navigation/scrolling, with no
+  `stealKeys` involved.
 - **`tests/harness.ts`** — `Harness`, a fake multi-line/multi-indent editor
   (`lines`/`indents`/`row`/`caret` arrays) that executes `Action`s the same way
   the real adapter does. Every new `Action` variant needs an implementation
