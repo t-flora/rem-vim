@@ -27,7 +27,10 @@ Run a single unit test file/case with Vitest directly, e.g.
 To actually see a change working: `npm run dev`, then in RemNote **Settings →
 Plugins → Build → Develop from localhost** → `http://localhost:8080/` → **Develop**,
 and toggle "Vim Mode" on. There is **no hot reload**; reload the plugin (or the
-RemNote window) after every code change to pick up new JS. A `-- NORMAL --` badge
+RemNote window) after every code change to pick up new JS. Adding a **new
+widget file** needs more: restart `npm run dev` entirely — webpack computes
+the `src/widgets/**/*.tsx` entry list once at startup, so a widget file that
+appeared later 404s on its `-sandbox.js` bundle and silently never mounts. A `-- NORMAL --` badge
 bottom-right confirms the plugin is active, and its bottom-left twin
 (`vim <mode> rx=<n> done=<n> k=<spec>`) is the debug readout — `rx` (keys
 received) staying ahead of `done` (keys fully processed) means a handler is

@@ -15,6 +15,42 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-11 — tutorial reviewed, tested, live-verified 10/10, MERGED to main
+
+Review + test pass over `feature/onboarding-tutorial` (the entry below).
+Content audit checked every claim on all 14 pages against the real
+engine/keymap/Ex-verb tables — one was false: the custom-keybindings page
+taught **`unmap gt`**, which `parseLhs` rejects (lhs must be ONE key), so
+the tutorial's only unmap example produced a parse error if actually tried.
+Fixed to `unmap ,`. Everything else held up (dib/i[/i'/i` text objects,
+`:t`/`:d`/`:y`/`:sort`/`:marks` verbs, Ctrl-H/Ctrl-L directions, mode-chip
+colors, shift-blind synonym table).
+
+New `tests/tutorial.test.ts` (15 tests): all 14 pages server-render via
+react-dom/server; mapping examples must parse cleanly (mutation-verified —
+fails on the original `unmap gt`); every single-key kbd shown must be a
+stolen key; one representative taught behavior per page runs against the
+Harness; and the REAL `onActivate` runs against the fake plugin for the
+gating rules (auto-open exactly once, `closeWhenClickOutside`, seen flag
+suppresses, palette command reopens without stacking). Enablers: sdk-stub
+now provides `renderWidget`/`declareIndexPlugin`/`usePlugin`/`WidgetLocation`
+recorders (widget modules import under vitest); FakeWorld gained
+settings/registerCommand/registerWidget/floating-widget-open tracking.
+Suite 649/649, `check-types` + build clean.
+
+**Live pass (e2e scratch vault): `e2e/tutorial.mjs` (new, kept) 10/10 —
+auto-open on first activation, ArrowRight/h/l across all 14 distinct pages,
+Enter-on-last-page closes, `vim-tutorial-seen` persists true, no reopen
+after a full window reload; `run.mjs` still 16/16.** Two operational
+lessons: (1) a NEW widget file needs a dev-server restart — webpack's
+`src/widgets/**/*.tsx` entry glob runs once at startup, so the fresh
+widget's `-sandbox.js` 404'd and the widget silently never mounted (the
+auto-open gating recovered by design: seen is only set on real mount, so it
+re-tried after the fix); now noted in CLAUDE.md. (2) playwright's
+connectOverCDP cannot frame-attach to the plugin's cross-origin iframes —
+`e2e/tutorial.mjs` drives them over raw CDP instead, each iframe being its
+own `/json/list` target (pattern reusable for any in-widget e2e).
+
 ### 2026-07-10 (evening) — getting-started tutorial widget added, on `feature/onboarding-tutorial`
 
 New floating widget `src/widgets/vim_tutorial.tsx`: a 14-page linear
@@ -2286,8 +2322,10 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
 - **Getting-started tutorial** — a 14-page walkthrough (`vim_tutorial.tsx`)
   opens automatically once, on first activation (`vim-tutorial-seen` synced
-  storage flag), and afterward via **"Vim: Tutorial"**; not yet
-  live-verified — see the 2026-07-10 (evening) §0 entry.
+  storage flag), and afterward via **"Vim: Tutorial"**. Live-verified
+  2026-07-11 (`e2e/tutorial.mjs` 10/10: auto-open, full keyboard page-walk,
+  Enter/Escape close, seen-flag persistence across an app reload); unit
+  coverage in `tests/tutorial.test.ts` — see the 2026-07-11 §0 entry.
 
 Known limitations (beyond §9 platform blockers):
 
