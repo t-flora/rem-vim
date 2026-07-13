@@ -32,9 +32,18 @@ widget file** needs more: restart `npm run dev` entirely — webpack computes
 the `src/widgets/**/*.tsx` entry list once at startup, so a widget file that
 appeared later 404s on its `-sandbox.js` bundle and silently never mounts. A `-- NORMAL --` badge
 bottom-right confirms the plugin is active, and its bottom-left twin
-(`vim <mode> rx=<n> done=<n> k=<spec>`) is the debug readout — `rx` (keys
-received) staying ahead of `done` (keys fully processed) means a handler is
-stuck on an unresolved promise inside `exec()`.
+(`vim <version>@<build-time> <mode> rx=<n> done=<n> k=<spec>`) is the debug
+readout — `rx` (keys received) staying ahead of `done` (keys fully processed)
+means a handler is stuck on an unresolved promise inside `exec()`.
+
+**Bump the version on every change round** — `version` in `package.json` plus
+the `version` object in `public/manifest.json` — and tell the user the exact
+first badge token to expect (e.g. `0.2.0@…`) so they can confirm the reload
+actually picked up your code. The version half of that token is a live module
+import from `package.json`, so a bump reaches a running dev server on the next
+incremental rebuild; the `@<build-time>` half is baked in per webpack process
+and only changes when `npm run dev`/`npm run build` restarts. An unchanged
+badge after a "reload" is the classic silently-running-old-code trap here.
 
 CI (`.github/workflows/ci.yml`) runs `check-types`, `test`, and `build` on every
 push/PR to `main`. The live e2e suite cannot run in CI (needs a real RemNote

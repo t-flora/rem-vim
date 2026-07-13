@@ -282,5 +282,29 @@ await keys(';q<cr>');
 await wait(800);
 check(':q closes it again', await paneSplit(), false);
 
+// ---- macros: record with q<reg>…q, replay with gq<reg> / gq. / [count]gq ----
+console.log('· macros q/gq');
+await keys('o');
+await insertType('teh teh teh');
+await keys('<esc>');
+await waitMode('NORMAL');
+await keys('0qa'); // line start (insert left the caret at the end), record into @a
+check('badge shows recording @a', /recording @a/.test(await badge()), true);
+await keys('fexpq'); // the lesson-11 fix (fe → onto the e, xp → swap past the h), stop
+check('badge recording tag cleared after the closing q', /recording/.test(await badge()), false);
+check('keys typed while recording still executed', await readOwn(), 'the teh teh');
+await keys('gqa');
+check('gqa replays the fix on the next teh', await readOwn(), 'the the teh');
+await keys('gq.');
+check('gq. (vim @@) replays it once more', await readOwn(), 'the the the');
+await keys('o');
+await insertType('xxxxxxkeep');
+await keys('<esc>');
+await waitMode('NORMAL');
+await keys('0qbxq'); // one-key macro: x (eats the first junk char while recording)
+await keys('5gqb'); // a count multiplies the replay
+check('[count]gq: 5gqb deletes the five remaining x', await readOwn(), 'keep');
+check('mode NORMAL after all replays', await mode(), 'NORMAL');
+
 console.log(`\nRESULT: ${pass}/${pass + fail} live checks passed`);
 process.exit(fail ? 1 : 0);

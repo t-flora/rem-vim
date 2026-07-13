@@ -44,11 +44,16 @@ export class Harness {
   lastSearch: string | null = null;
   /** Whether the last search/searchStep wrapped around the document boundary. */
   searchWrapped = false;
+  /** Messages from `toast` Actions (the adapter shows plugin.app.toast). */
+  toasts: string[] = [];
   state: VimState;
 
   private undoStack: DocState[] = [];
   private redoStack: DocState[] = [];
   private typingRun = false;
+  /** replayKeys nesting/budget — mirrors VimAdapter's guard exactly. */
+  private replayDepth = 0;
+  private replayBudget = 0;
   /** User key mappings (the :config feature); null = no expansion. */
   private mappings: MapConfig | null = null;
 
@@ -100,10 +105,14 @@ export class Harness {
   /** One key through the engine — shared by keys() and replayKeys. */
   private step(key: string) {
     if (this.state.mode === 'insert' && key !== 'Escape') {
-      this.type(key === 'Enter' ? '\n' : key);
+      // A replayed key exists only as an engine symbol — the live adapter
+      // feeds it to handleKey, where handleInsert ignores everything but
+      // Escape; it never types. Only a real keystroke inserts text.
+      if (this.replayDepth === 0) this.type(key === 'Enter' ? '\n' : key);
       return;
     }
-    const { state, actions } = handleKey(this.state, key, this.snapshot());
+    const snap: Snapshot = { ...this.snapshot(), replaying: this.replayDepth > 0 };
+    const { state, actions } = handleKey(this.state, key, snap);
     this.state = state;
     const mutates = actions.some((a) => MUTATING.has(a.t));
     if (mutates) this.pushUndo();
@@ -435,8 +444,24 @@ export class Harness {
         }
         break;
       }
-      case 'replayKeys':
-        for (const k of a.keys.slice(0, 32)) this.step(k);
+      case 'replayKeys': {
+        // Depth + total-key budget instead of a flat slice — a macro can
+        // invoke gq (even recursively); mirrors VimAdapter.exec's guard.
+        if (this.replayDepth >= 8) break;
+        if (this.replayDepth === 0) this.replayBudget = 1000;
+        this.replayDepth++;
+        try {
+          for (const k of a.keys) {
+            if (this.replayBudget-- <= 0) break;
+            this.step(k);
+          }
+        } finally {
+          this.replayDepth--;
+        }
+        break;
+      }
+      case 'toast':
+        this.toasts.push(a.msg);
         break;
       case 'undo': {
         const s = this.undoStack.pop();

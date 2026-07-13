@@ -28,8 +28,8 @@ export { initialState };
  * 'Backspace', 'C-r'.
  */
 export function handleKey(state: VimState, key: string, snap: Snapshot): EngineResult {
-  const res = dispatch(state, key, snap);
-  return recordDotRepeat(state, key, res);
+  const res = recordDotRepeat(state, key, dispatch(state, key, snap));
+  return recordMacro(state, key, snap, res);
 }
 
 function dispatch(state: VimState, key: string, snap: Snapshot): EngineResult {
@@ -85,6 +85,31 @@ function recordDotRepeat(pre: VimState, key: string, res: EngineResult): EngineR
     res.state = { ...st, keyLog: [], lastChange: log };
   } else if (st.keyLog.length) {
     res.state = { ...st, keyLog: [] };
+  }
+  return res;
+}
+
+/**
+ * Macro bookkeeping (vim `q` / `@`, replay spelled `gq` here). Every key that
+ * arrives while a recording is active is appended to it, whatever the mode —
+ * except the keys that manage the recording itself (the starting `q<reg>`:
+ * recording was null before this key; the stopping `q`: null after it) and
+ * keys re-fed by a replay (`snap.replaying` — see the Snapshot doc comment).
+ * Entering insert mode while recording earns a warning toast: insert mode
+ * releases every key but Escape back to RemNote, so typed text can never be
+ * part of a macro — the same platform limit that keeps `cw`/`o` out of
+ * dot-repeat. The mode switch itself and the closing Escape ARE recorded, so
+ * a replay still passes through insert mode, it just types nothing.
+ */
+function recordMacro(pre: VimState, key: string, snap: Snapshot, res: EngineResult): EngineResult {
+  if (snap.replaying || !pre.recording || !res.state.recording) return res;
+  const rec = res.state.recording;
+  res.state = { ...res.state, recording: { reg: rec.reg, keys: [...rec.keys, key] } };
+  if (pre.mode !== 'insert' && res.state.mode === 'insert') {
+    res.actions = [
+      ...res.actions,
+      { t: 'toast', msg: `recording @${rec.reg}: typed text is not captured (insert mode)` },
+    ];
   }
   return res;
 }
@@ -389,10 +414,12 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
         return toMode(state, 'insert', [{ t: 'setCaret', at: n }]);
       case 'j': // gj → J (join with the next sibling bullet)
         return reset(state, [{ t: 'joinRem', count }]);
-      case 'd': // gd → Ctrl-D (half page down)
-        return reset(state, [{ t: 'scroll', dir: 1, count: PAGE }]);
-      case 'u': // gu → Ctrl-U (half page up)
-        return reset(state, [{ t: 'scroll', dir: -1, count: PAGE }]);
+      case 'q': // gq<reg> → @<reg> (macro replay; '@' is shift-blind-unreachable)
+        return { state: { ...state, pending: { p: 'play' } }, actions: [] };
+      // NOTE: gd/gu (half-page scroll) were REMOVED 2026-07-12 — they were
+      // pure aliases of Ctrl-D/Ctrl-U, which deliver fine on every host
+      // (ctrl chords are not shift-blind). The letters are free again; gu
+      // is reserved-by-convention for vim's own lowercase operator.
       // NOTE: a 2026-07 batch briefly bound gt/gp/gn/gc/gm to pane
       // management; removed as redundant aliases (gt/gp = Ctrl-L/Ctrl-H,
       // gn = :vs, gc = :q, and gm's pane-swap rebuilt hand-arranged layouts
@@ -427,6 +454,28 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
   if (state.pending.p === 'gotoMark') {
     if (key.length !== 1) return reset(state);
     return reset(state, [{ t: 'gotoMark', name: key }]);
+  }
+
+  // --- macros: q<reg> starts recording, gq<reg> replays (vim @<reg>)
+  if (state.pending.p === 'record') {
+    if (!/^[a-z]$/.test(key)) return reset(state);
+    return reset({ ...state, recording: { reg: key, keys: [] } }, [
+      { t: 'toast', msg: `recording @${key} — q stops` },
+    ]);
+  }
+  if (state.pending.p === 'play') {
+    // `.` = replay the last-replayed register (vim @@; '.' is not a register
+    // name, so this can't shadow one).
+    const reg = key === '.' ? state.lastMacro : /^[a-z]$/.test(key) ? key : null;
+    if (!reg) return reset(state, key === '.' ? [{ t: 'toast', msg: 'no macro replayed yet' }] : []);
+    const keys = state.macros[reg];
+    if (!keys || keys.length === 0) {
+      return reset(state, [{ t: 'toast', msg: `register @${reg} is empty — record with q${reg}` }]);
+    }
+    // [count]gq<reg> = vim [count]@<reg>: the executor caps total replayed
+    // keys, so a huge count degrades gracefully instead of wedging.
+    const repeated = count > 1 ? Array.from({ length: count }, () => keys).flat() : keys;
+    return reset({ ...state, lastMacro: reg }, [{ t: 'replayKeys', keys: repeated }]);
   }
 
   // --- counts
@@ -492,6 +541,28 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
       return { state: { ...state, pending: { p: 'mark' } }, actions: [] };
     case "'":
       return { state: { ...state, pending: { p: 'gotoMark' } }, actions: [] };
+
+    // --- macros: q toggles recording (vim's own key — reserved for exactly
+    // this since the `z` search-repeat pick, see that comment below). Replay
+    // is `gq<reg>` because vim's `@` is a shifted key the stealing can't see.
+    // Ignored mid-replay like vim: a replayed q must not start a recording.
+    case 'q': {
+      if (snap.replaying) return reset(state);
+      if (state.recording) {
+        const { reg, keys } = state.recording;
+        // `q<reg>q` with nothing in between clears the register — the vim
+        // `qaq` idiom — so an empty save is deliberate, not an error.
+        return reset({ ...state, recording: null, macros: { ...state.macros, [reg]: keys } }, [
+          {
+            t: 'toast',
+            msg: keys.length
+              ? `recorded @${reg} (${keys.length} keys) — replay with gq${reg}`
+              : `register @${reg} cleared`,
+          },
+        ]);
+      }
+      return { state: { ...state, pending: { p: 'record' } }, actions: [] };
+    }
 
     // --- mode switches
     case 'i':
@@ -632,8 +703,9 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     // unreachable (shift-blind stealing — see keymap.ts), so an unshifted
     // stand-in is needed; of the handful of letters still unbound at the
     // time (re-grep `case '` in this switch before reusing either), `z` was
-    // picked over `q` specifically to leave `q` free for a possible future
-    // macro-record command (vim's own, more idiomatic use for that letter).
+    // picked over `q` specifically to leave `q` free for a macro-record
+    // command (vim's own, more idiomatic use for that letter) — which `q`
+    // has since become (see the macros case above).
     // Matching itself is async (whole-document Rem enumeration), so it lives
     // entirely in the adapter — see Action's search/searchStep doc comments.
     case 'n':

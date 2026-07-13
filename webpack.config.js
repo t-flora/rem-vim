@@ -6,17 +6,16 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { ESBuildMinifyPlugin } = require('esbuild-loader');
 const { ProvidePlugin, BannerPlugin, DefinePlugin } = require('webpack');
 const CopyPlugin = require('copy-webpack-plugin');
-const { version } = require('./package.json');
-
 const isProd = process.env.NODE_ENV === 'production';
 
-// Evaluated once per webpack process start (npm run dev / npm run build) —
-// NOT re-evaluated on every incremental dev-server rebuild, since
-// webpack.config.js is only require()'d once. Good enough for its purpose:
-// confirming the plugin loaded in RemNote came from *this* dev-server/build
-// invocation rather than a stale one from before a "no hot reload" reload —
-// restart `npm run dev` (or rebuild) to refresh it.
-const BUILD_STAMP = `${version}@${new Date().toISOString().slice(0, 19)}`;
+// Webpack-process start time, the `@…` half of the debug badge's first token.
+// Evaluated once per process (npm run dev / npm run build) — NOT re-evaluated
+// on incremental dev-server rebuilds, since webpack.config.js is only
+// require()'d once. The *version* half of that token is different: adapter.ts
+// imports it straight from package.json as a module, so bumping the version
+// reaches a still-running dev server on the next incremental rebuild — which
+// is why the version MUST be bumped every change round (see CLAUDE.md).
+const BUILD_TIME = new Date().toISOString().slice(0, 19);
 
 // RemNote loads each widget twice: once as a module (needs IMPORT_META shim)
 // and once inside the sandbox iframe via index.html?widgetName=<name>.
@@ -57,7 +56,7 @@ const config = {
   },
   plugins: [
     new DefinePlugin({
-      __VIM_BUILD__: JSON.stringify(BUILD_STAMP),
+      __VIM_BUILD__: JSON.stringify(BUILD_TIME),
     }),
     new HtmlWebpackPlugin({
       templateContent: `

@@ -5,6 +5,7 @@ import {
   RichTextInterface,
   SelectionType,
 } from '@remnote/plugin-sdk';
+import { version as VIM_VERSION } from '../../package.json';
 import { handleKey, initialState } from '../engine/engine';
 import { TUTORIAL_DOC_NAME, TUTORIAL_LINES } from './tutorialDoc';
 import { stopsBetween } from '../engine/motions';
@@ -103,15 +104,25 @@ const MODE_LABELS: Record<Mode, string> = {
 };
 
 export class VimAdapter {
-  /** package version + webpack-process build time — see src/global.d.ts and
-   * webpack.config.js's DefinePlugin. Shown in the debug badge so a stale
-   * "no hot reload" plugin load is immediately visible instead of silently
-   * running old code. */
-  private static readonly BUILD =
-    typeof __VIM_BUILD__ !== 'undefined' ? __VIM_BUILD__ : 'dev';
+  /** First debug-badge token: `<package version>@<webpack build time>`, so a
+   * stale "no hot reload" plugin load is immediately visible instead of
+   * silently running old code. The version is a real module import from
+   * package.json — bump it EVERY change round (with public/manifest.json in
+   * tandem) and a running dev server picks it up on the next incremental
+   * rebuild; the time half (DefinePlugin, see src/global.d.ts) only refreshes
+   * when the webpack process itself restarts. */
+  private static readonly BUILD = `${VIM_VERSION}@${
+    typeof __VIM_BUILD__ !== 'undefined' ? __VIM_BUILD__ : 'dev'
+  }`;
   private state: VimState = initialState();
   private queue: Promise<unknown> = Promise.resolve();
   private stolenSpecs = new Set<string>();
+  /** replayKeys nesting (dot-repeat, macros). >0 = keys are being re-fed. */
+  private replayDepth = 0;
+  /** Keys left in the current top-level replay (see exec's replayKeys case). */
+  private replayBudget = 0;
+  private static readonly REPLAY_MAX_DEPTH = 8;
+  private static readonly REPLAY_KEY_BUDGET = 1000;
   /** Line register: cut/yanked bullets INCLUDING their subtrees. */
   private lineRegister: RegisterNode[] = [];
   /**
@@ -400,6 +411,10 @@ export class VimAdapter {
    */
   private async applyKey(sym: string) {
     const snap = await this.snapshot();
+    // snapshot() returns a fresh object, never this.model itself, so tagging
+    // it is safe. The flag keeps replayed keys out of an active macro
+    // recording and inert as q — see the Snapshot doc comment.
+    if (this.replayDepth > 0) snap.replaying = true;
     const { state, actions } = handleKey(this.state, sym, snap);
     this.state = state;
     for (const a of actions) {
@@ -591,6 +606,7 @@ export class VimAdapter {
       case 'collapseSelection': // exec sets model.caret itself
       case 'search': // exec's performSearch installs a fresh model itself
       case 'searchStep': // ditto — a no-op when there's no previous search
+      case 'toast': // informational only — never touches document or caret
         // newBullet installs its own model in exec; copyText's fallback path
         // maintains the model caret itself in exec; the others don't change
         // the focused line's text. Insert-mode exit is reconciled separately.
@@ -1192,12 +1208,37 @@ export class VimAdapter {
         break;
       }
 
-      case 'replayKeys':
-        // Dot-repeat. Replayed keys can never contain '.' (a replay is not
-        // itself recorded as a change), so this cannot recurse deeper.
-        for (const k of a.keys.slice(0, 32)) {
-          await this.applyKey(k);
+      case 'replayKeys': {
+        // Dot-repeat AND macro replay share this path. A dot sequence can
+        // never contain '.' (a replay is not itself recorded as a change),
+        // but a macro CAN invoke gq — even its own register — so recursion
+        // is guarded by depth, and total volume by a per-invocation key
+        // budget (which also caps `100gqa` on a long macro) instead of the
+        // old flat 32-key slice.
+        if (this.replayDepth >= VimAdapter.REPLAY_MAX_DEPTH) {
+          await this.plugin.app.toast('macro: recursion too deep — stopped');
+          break;
         }
+        if (this.replayDepth === 0) this.replayBudget = VimAdapter.REPLAY_KEY_BUDGET;
+        this.replayDepth++;
+        try {
+          for (const k of a.keys) {
+            if (this.replayBudget-- <= 0) {
+              if (this.replayDepth === 1) {
+                await this.plugin.app.toast('macro: replay stopped (key budget exhausted)');
+              }
+              break;
+            }
+            await this.applyKey(k);
+          }
+        } finally {
+          this.replayDepth--;
+        }
+        break;
+      }
+
+      case 'toast':
+        await this.plugin.app.toast(a.msg);
         break;
 
       case 'mode': {
@@ -2113,6 +2154,11 @@ export class VimAdapter {
         const parentId = line.indent === 1 && lastTop ? lastTop : created._id;
         await kid.setParent(parentId, (pos[parentId] = (pos[parentId] ?? -1) + 1));
         await kid.setText([line.text]);
+        if (line.heading) {
+          // Lesson titles get the vimtutor look: /h3 heading, blue bullet.
+          await kid.setFontSize('H3');
+          await kid.setHighlightColor('Blue');
+        }
         if (line.indent === 0) lastTop = kid._id;
       }
       this.tutorialRemId = created._id;
@@ -2783,6 +2829,10 @@ export class VimAdapter {
       label = `/${esc(this.state.searchLine)}`;
     } else {
       label = `-- ${MODE_LABELS[mode]} --`;
+      // vim shows "recording @a" in the statusline for the whole recording;
+      // the badge is this plugin's statusline. Kept visible through insert
+      // mode too — that's exactly when forgetting an open recording hurts.
+      if (this.state.recording) label += ` recording @${this.state.recording.reg}`;
     }
     // The visual-line tint survives into command mode so the user can see
     // what a range command (:s over the selection) will act on while typing.

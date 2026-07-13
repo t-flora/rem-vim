@@ -9,6 +9,15 @@ export type Mode = 'normal' | 'insert' | 'visual' | 'visual-line' | 'command' | 
 export interface Snapshot {
   text: string;
   caret: number;
+  /**
+   * True while this key is being re-fed by a replay (dot-repeat or a macro).
+   * Replayed keys must not be appended to an active macro recording — the
+   * `gq<reg>` INVOCATION is recorded, its expansion is not, or a macro run
+   * inside another recording would double every time — and `q` can't
+   * start/stop a recording mid-replay (matches vim, which ignores q while
+   * executing a register).
+   */
+  replaying?: boolean;
 }
 
 /**
@@ -114,6 +123,12 @@ export type Action =
    * A no-op (adapter shows a toast) if no search has run yet this session.
    */
   | { t: 'searchStep'; dir: -1 | 1 }
+  /**
+   * Transient user feedback (macro recording started/stopped, empty register,
+   * insert-mode-in-macro warning…). Purely informational: never touches the
+   * document, the caret, or the model.
+   */
+  | { t: 'toast'; msg: string }
   | { t: 'mode'; mode: Mode };
 
 /** The register: either in-line text or whole-line (Rem) content held by the adapter. */
@@ -138,7 +153,11 @@ export type Pending =
    * Visual mode `gs` pressed; waiting for the delimiter selector key (see
    * `SURROUND_PAIRS` in engine.ts). Charwise visual only.
    */
-  | { p: 'surround' };
+  | { p: 'surround' }
+  /** `q` pressed (no recording active); waiting for the register name a–z. */
+  | { p: 'record' }
+  /** `gq` pressed; waiting for the register to replay (`.` = last replayed). */
+  | { p: 'play' };
 
 export interface VimState {
   mode: Mode;
@@ -162,6 +181,12 @@ export interface VimState {
   keyLog: string[];
   /** Dot-repeat: keys of the last completed normal-mode CHANGE (`.` replays). */
   lastChange: string[] | null;
+  /** Macro recording in flight: register name + every key captured so far. */
+  recording: { reg: string; keys: string[] } | null;
+  /** Named macro registers a–z: the key sequences recorded with `q<reg>…q`. */
+  macros: Record<string, string[]>;
+  /** Register of the last `gq` replay, for `gq.` (vim `@@`). */
+  lastMacro: string | null;
 }
 
 export function initialState(): VimState {
@@ -179,6 +204,9 @@ export function initialState(): VimState {
     searchLine: '',
     keyLog: [],
     lastChange: null,
+    recording: null,
+    macros: {},
+    lastMacro: null,
   };
 }
 

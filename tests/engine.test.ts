@@ -929,12 +929,16 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
     expect(e.lines).toEqual(['one', 'new', 'two']);
   });
 
-  it('gd / gu scroll like Ctrl-D / Ctrl-U', () => {
+  it('gd / gu are unbound (removed 2026-07-12 — pure aliases of Ctrl-D/Ctrl-U)', () => {
     const lines = Array.from({ length: 30 }, (_, i) => `l${i}`);
     const e = h(lines, 0);
     e.keys('gd');
-    expect(e.row).toBe(12);
+    expect(e.row).toBe(0);
     e.keys('gu');
+    expect(e.row).toBe(0);
+    e.keys('<c-d>');
+    expect(e.row).toBe(12);
+    e.keys('<c-u>');
     expect(e.row).toBe(0);
   });
 });

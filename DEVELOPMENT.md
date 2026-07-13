@@ -15,6 +15,123 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-07-13 — tutorial restyle (H3+blue titles, spacers, 2+ practices per lesson); macros CONFIRMED live by the user; v0.2.1
+
+User live-tested macros and reported them working. This round, on their
+request: the "Vim Tutorial" doc got a visual + content pass, and everything
+(macros round + this) was merged to `main`.
+
+- **Lesson titles are now real headings**: `TutorialLine` gained
+  `heading?: boolean`; `openTutorial`'s seeding applies
+  `rem.setFontSize('H3')` + `rem.setHighlightColor('Blue')` (both first-class
+  SDK 0.0.46 methods on RemObject — no powerup plumbing needed) to every
+  heading line. FakeRem stubs both setters; the lifecycle test asserts titles
+  get H3+Blue and spacers/content stay plain. **The one thing NOT
+  live-verified: that H3+Blue actually render in a real RemNote** (the
+  isolated e2e home at /tmp was wiped, and rebuilding the scratch KB via GUI
+  automation wasn't worth it mid-round) — the user sees it on the next
+  re-seed (delete the doc, `:tutorial`).
+- **Blank spacer bullets** (`gap()`, empty indent-0 lines) sit between
+  lessons — exactly one before every title except the first, enforced by a
+  structure test (spacers may ONLY appear immediately before a title).
+- **Every lesson now has ≥2 `Practice:` bullets** (enforced by test), each
+  new claim verified against the Harness on the line's own text like the
+  existing ones: L0 `ge`/`gg`, L1 `gl`/`0`, L2 `go`, L3 `daw`, L4 `r`,
+  L5 `4j`/`4k`, L6 a real-regex search (`b.g` → bag/big/bug, data placed
+  BEFORE the pattern's literal spelling in the line so the first match is
+  honest), L7 marks `ma`/`'a`, L8 `ve` backtick, L9 `;5`, L10 `;config` +
+  `;map`, L11 a cross-bullet macro (`qd2xjq` on three junk bullets, replay
+  with `gqd`/`gq.` — the classic vim macro workflow). Watch for the
+  indexOf-trap when wording practice lines: the taught pattern/word must not
+  appear in the instruction text before the practice tail (see the `teh` and
+  `b.g` tests).
+- Existing lifecycle test un-hardcoded (lesson 0's children are computed from
+  TUTORIAL_LINES now, not `[1..3]`).
+- **e2e/batch.mjs gained a macro phase** (badge `recording @a` visible during
+  recording and cleared after, record-executes-live, `gqa`, `gq.`, `5gqb`
+  count replay) — syntax-checked only, NOT run this round (no scratch
+  instance); run it next time the e2e harness is up.
+- Suite: 677 unit tests (`npx vitest run --dir tests`), check-types + build
+  clean. Version 0.2.0 → **0.2.1** (badge token `0.2.1@…`).
+
+### 2026-07-12 — MACROS with named registers (`q`/`gq`); `gd`/`gu` scroll aliases REMOVED — NOT yet live-verified
+
+User asked for vim macros and for dropping `gd`/`gu` (pure aliases of
+Ctrl-D/Ctrl-U, which deliver fine on every host — ctrl chords aren't
+shift-blind). **Deliberately not live-verified: the user was working in
+their real RemNote and will check it themselves** — unit suite 664/664
+(`npx vitest run --dir tests`; a bare `npm test` also collects the stale
+`.claude/worktrees/*` copies and inflates the count), `check-types` clean,
+e2e untouched and unrun.
+
+The feature, all engine-side except executor plumbing:
+
+- **`q<a–z>`** starts recording into that named register, **`q`** stops
+  (`qaq` clears a register, the vim idiom — an empty save is deliberate).
+  **`gq<reg>`** replays (vim `@<reg>` — `@` is a shifted key the stealing
+  can't see, so it follows the g-chord synonym convention), **`gq.`**
+  replays the last-replayed register (vim `@@`; `.` can't shadow a register
+  name), **`[count]gq<reg>`** repeats. Storage is
+  `VimState.macros: Record<string, string[]>` + `recording` + `lastMacro`;
+  new `Pending` variants `record`/`play`.
+- **Recording** is a `recordMacro()` wrapper around `handleKey` (mirrors
+  `recordDotRepeat`): every key that arrives while recording is appended,
+  whatever the mode — so command-line sequences (`;s/a/b/<CR>`) and search
+  jumps record and replay correctly. The keys that manage recording itself
+  (starting `q<reg>`, stopping `q`) are excluded by a before/after
+  null-check, not by key value.
+- **Insert mode can't be captured** (only Escape is stolen — same platform
+  limit that keeps `cw`/`o` out of dot-repeat). Entering insert while
+  recording earns a warning toast; the mode switch + closing Escape ARE
+  recorded, so a replay passes through insert typing nothing.
+- **Replay** reuses the dot-repeat `replayKeys` executor path, whose old
+  flat `slice(0, 32)` became a depth guard (8) + per-invocation total key
+  budget (1000) in BOTH `VimAdapter.exec()` and `Harness.exec()` — a macro
+  can invoke `gq`, even its own register, so recursion must terminate, and
+  `100gqa` on a long macro must degrade gracefully (toasts when it stops).
+  `Snapshot.replaying` (set by both executors while re-feeding keys) keeps
+  replayed keys out of an active recording — the `gq<reg>` INVOCATION is
+  recorded, its expansion is not, or a macro run inside another recording
+  would double per run — and makes a replayed `q` inert (vim ignores q
+  while executing a register). The Harness also stopped TYPING replayed
+  insert-mode keys into the document (the live adapter's handleKey path
+  drops them), a fidelity fix that only macros could ever reach.
+- New **`toast` Action** (informational, no model impact) — recording
+  start/stop feedback, empty-register hints, the insert warning. The mode
+  badge shows ` recording @a` for the whole recording, insert included
+  (vim's statusline `recording @a`).
+- `gd`/`gu` removed from the g-chord switch (comment left in place; `gu`
+  reserved-by-convention for vim's lowercase operator). The engine-edge
+  "count then non-command key aborts" test used `3q` as its inert key —
+  every letter is now bound, so it uses `]` instead.
+- Docs: `:help` gained a Macros section; tutorial gained **Lesson 11 —
+  macros** (practice line `teh teh teh` fixed by `qafexpq` + `gqa` + `gq.`,
+  claim verified in tests/tutorial.test.ts against the Harness like every
+  other lesson); §0.5 updated. New tests/macros.test.ts (16 tests: record/
+  stop/clear, counts, replay, `gq.`, empty registers, Ex-in-macro,
+  dot-after-macro, invocation-vs-expansion recording, recursion guard,
+  replayed-q inertness).
+
+**For the next session / live check:** the things unit tests can't prove —
+toasts actually render, the badge string fits, replay pacing against the
+real async exec loop (each replayed key awaits a full applyKey), and
+`;s/…/<CR>` inside a macro against real Rems. `e2e/batch.mjs` would be the
+natural place for a macro phase if live verification is wanted later.
+
+**2026-07-13 follow-up — version bump + build-token fix.** The user (rightly)
+flagged that this round shipped with no version change: the debug badge still
+opened with `0.1.0@…`, so a reload of the still-running dev server was
+indistinguishable from stale code. Two fixes: (1) this round is now **0.2.0**
+(package.json + public/manifest.json — badge first token `0.2.0@…`); (2) the
+badge token was restructured so the version half is a real
+`import { version } from '../../package.json'` in adapter.ts
+(`resolveJsonModule` added to tsconfig) instead of being baked into the
+DefinePlugin stamp — a version bump now reaches a running dev server on the
+next incremental rebuild, no `npm run dev` restart needed. `__VIM_BUILD__` is
+just the webpack-process start time now (global.d.ts updated). **Standing
+rule, now in CLAUDE.md: bump the version every change round and tell the user
+the exact first badge token to expect.**
+
 ### 2026-07-11 (later still) — pane g-chords (`gt`/`gp`/`gn`/`gc`/`gm`) REMOVED, on main
 
 User call: they were aliases of functionality that already exists —
@@ -2264,7 +2381,9 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 ## 0.5 Feature status (what works live)
 
 Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
-**608/608** unit tests green (run `npm test` — don't trust this number, verify).
+**664/664** unit tests green (run `npx vitest run --dir tests` — don't trust
+this number, verify; a bare `npm test` also collects the stale
+`.claude/worktrees/*` suite copies and inflates it).
 
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
@@ -2295,6 +2414,16 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 - **Dot-repeat `.`** — repeats the last completed normal-mode change (`dw`,
   `3x`, `r<c>`, `p`, `gj`, `C-a`…). Changes that enter insert mode (`cw`,
   `o`) are NOT recorded — inserted text never reaches the engine.
+- **Macros (named registers a–z)** — `q<reg>` records, `q` stops (`qaq`
+  clears), `gq<reg>` replays (vim `@<reg>`; `@` is shift-blind-unreachable),
+  `gq.` = `@@`, counts work (`3gqa`). Records across all engine-visible
+  modes — command-line (`;s/…/<CR>`) and search sequences replay correctly —
+  but insert-mode TYPED TEXT is never captured (only Escape is stolen; a
+  warning toast fires, and the replay passes through insert typing nothing —
+  dot-repeat's limitation, same cause). Recursion depth 8 / 1000-key budget
+  per replay. Badge shows ` recording @a` for the duration. Added 2026-07-12,
+  **live-confirmed by the user 2026-07-13** ("the macros seem to work
+  properly"); e2e/batch.mjs has a macro phase, written but not yet run.
 - **Charwise visual** — `v` + `h/l/w/b/e/f/gf/gl/gh` to shape; `d x c s y p o`,
   backtick=`~` (toggle case of the whole selection, no yank, cursor lands at
   the selection start — vim semantics); `gg/ge/G` escalate to line-wise to
@@ -2370,8 +2499,11 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   outside insert mode.
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
 - **Getting-started tutorial** — a seeded **"Vim Tutorial" practice
-  document** (vimtutor model: 11 lessons as real bullets, every command
-  practiced in place with the real bindings; content in
+  document** (vimtutor model: 12 lessons as real bullets, every command
+  practiced in place with the real bindings; ≥2 practice bullets per lesson;
+  titles seeded as H3 headings with blue bullets, one blank spacer bullet
+  between lessons — restyled 2026-07-13, H3/Blue rendering not yet checked in
+  a live RemNote; content in
   `src/adapter/tutorialDoc.ts`, lifecycle mirrors the `:config` doc — id
   pinned in synced storage, deleting the doc re-seeds fresh). Auto-opens
   once on first activation (`vim-tutorial-seen` flag), reopens via

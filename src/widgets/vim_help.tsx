@@ -239,6 +239,13 @@ function VimHelp() {
             <Row keys={["'", "'"]} desc="back to where the last jump started" />
             <Row keys={[':marks']} desc="list your marks" />
           </Section>
+
+          <Section title="Macros">
+            <Row keys={['q', '·']} desc="record your keys into register ‘·’ (a–z)" />
+            <Row keys={['q']} desc="stop recording (typed insert-mode text is not captured)" />
+            <Row keys={['g', 'q', '·']} desc="replay register ‘·’  (vim: @·)" />
+            <Row keys={['g', 'q', '.']} desc="replay the last one again  (vim: @@; counts work: 3gqa)" />
+          </Section>
         </div>
 
         <div>
