@@ -40,9 +40,151 @@ describe('tutorial document content structure', () => {
     expect(rows).toHaveLength(2);
     expect(rows[1]).toBe(texts.length - 1); // the hidden one is the last line
   });
+
+  it('lesson titles are headings, each later one preceded by exactly one blank spacer', () => {
+    const heads = TUTORIAL_LINES.filter((l) => l.heading);
+    expect(heads.length).toBeGreaterThanOrEqual(13); // 12 lessons + The end
+    for (const h of heads) expect(h.indent).toBe(0);
+    expect(TUTORIAL_LINES[0].heading).toBe(true); // no spacer before the first
+    TUTORIAL_LINES.forEach((l, i) => {
+      if (l.heading && i > 0) {
+        expect(TUTORIAL_LINES[i - 1].text, `spacer before "${l.text}"`).toBe('');
+        expect(TUTORIAL_LINES[i - 2]?.text, `single spacer before "${l.text}"`).not.toBe('');
+      }
+      if (l.text === '') {
+        // spacers exist ONLY as the bullet right before a lesson title
+        expect(l.indent).toBe(0);
+        expect(l.heading).toBeUndefined();
+        expect(TUTORIAL_LINES[i + 1]?.heading, `spacer at ${i} must precede a title`).toBe(true);
+      }
+    });
+    expect(TUTORIAL_LINES[TUTORIAL_LINES.length - 1].text).not.toBe('');
+  });
+
+  it('every lesson has at least two practice bullets', () => {
+    const counts: number[] = [];
+    for (const l of TUTORIAL_LINES) {
+      if (l.heading) counts.push(0);
+      else if (l.text.startsWith('Practice:')) counts[counts.length - 1]++;
+    }
+    counts.pop(); // 'The end' is a sign-off, not a lesson
+    expect(counts.length).toBe(12); // lessons 0–11
+    for (const n of counts) expect(n).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('tutorial practice lines do what they say', () => {
+  it('lesson 0: ge dives to the last bullet of the document, gg surfaces back to the top', () => {
+    const from = texts.indexOf(lineWith('then gg to come back to the top'));
+    const e = new Harness(texts, from, 0);
+    e.keys('ge');
+    expect(e.row).toBe(texts.length - 1);
+    e.keys('gg');
+    expect(e.row).toBe(0);
+  });
+
+  it('lesson 1: gl runs to the end of the line, 0 snaps back to the start', () => {
+    const line = lineWith('then 0 to snap back');
+    const e = new Harness([line]);
+    e.keys('gl');
+    expect(e.caret).toBe(line.length);
+    e.keys('0');
+    expect(e.caret).toBe(0);
+  });
+
+  it('lesson 2: go opens a fresh bullet above and enters insert mode', () => {
+    const line = lineWith('press go to open a bullet above');
+    const e = new Harness([line]);
+    e.keys('go');
+    expect(e.mode).toBe('insert');
+    expect(e.lines).toEqual(['', line]); // new empty bullet above, focused
+    expect(e.row).toBe(0);
+  });
+
+  it('lesson 3: daw on the middle word leaves a clean sentence', () => {
+    const line = lineWith('delete clutter here');
+    const e = new Harness([line], 0, line.indexOf('clutter'));
+    e.keys('daw');
+    expect(e.line.endsWith('delete here.')).toBe(true);
+    expect(e.line).not.toContain('clutter');
+  });
+
+  it('lesson 4: r c turns the kat into a cat', () => {
+    const line = lineWith('kat');
+    const e = new Harness([line], 0, line.indexOf('kat'));
+    e.keys('rc');
+    expect(e.line).toContain('cat');
+    expect(e.line).not.toContain('kat');
+  });
+
+  it('lesson 5: 4j drops four bullets down, 4k climbs back up', () => {
+    const from = texts.indexOf(lineWith('4k climbs back up here'));
+    expect(from + 4).toBeLessThan(texts.length); // room to actually drop four
+    const e = new Harness(texts, from, 0);
+    e.keys('4j');
+    expect(e.row).toBe(from + 4);
+    e.keys('4k');
+    expect(e.row).toBe(from);
+  });
+
+  it('lesson 6: the b.g regex lands on bag, then n n visit big and bug', () => {
+    const line = lineWith('bag, big and bug');
+    const row = texts.indexOf(line);
+    const e = new Harness(texts, row, 0);
+    e.keys('<space>b.g<cr>');
+    expect(e.row).toBe(row);
+    expect(e.caret).toBe(line.indexOf('bag'));
+    e.keys('n');
+    expect(e.caret).toBe(line.indexOf('big'));
+    e.keys('n');
+    expect(e.caret).toBe(line.indexOf('bug'));
+    expect(e.row).toBe(row);
+  });
+
+  it("lesson 7: m a marks the bullet, gg leaves, ' a teleports back", () => {
+    const from = texts.indexOf(lineWith('teleport back here'));
+    const e = new Harness(texts, from, 0);
+    e.keys('magg');
+    expect(e.row).toBe(0);
+    e.keys("'a");
+    expect(e.row).toBe(from);
+  });
+
+  it('lesson 8: v e backtick shouts the whisper', () => {
+    const line = lineWith('shhh');
+    const e = new Harness([line], 0, line.indexOf('shhh'));
+    e.keys('ve`');
+    expect(e.mode).toBe('normal');
+    expect(e.line).toContain('SHHH');
+  });
+
+  it('lessons 9/10: the ;5, ;config and ;map practices submit what they promise', () => {
+    const e = new Harness([lineWith('a bare number is a jump')]);
+    e.keys(';5<cr>');
+    expect(e.lastEx).toBe('5');
+    const e2 = new Harness([lineWith('type ;config then Enter')]);
+    e2.keys(';config<cr>');
+    expect(e2.lastEx).toBe('config');
+    const e3 = new Harness([lineWith('type ;map then Enter')]);
+    e3.keys(';map<cr>');
+    expect(e3.lastEx).toBe('map');
+  });
+
+  it('lesson 11: qd2xjq recorded on the first junk bullet, gqd and gq. fix the rest', () => {
+    const r = texts.indexOf(lineWith('xxone of three'));
+    expect(texts[r + 1]).toBe('xxtwo of three');
+    expect(texts[r + 2]).toBe('xxthree of three');
+    const e = new Harness(texts, r, 0);
+    e.keys('qd2xjq');
+    expect(e.state.macros['d']).toEqual(['2', 'x', 'j']);
+    expect(e.lines[r]).toBe('one of three');
+    expect(e.row).toBe(r + 1); // the recorded j already stepped down
+    e.keys('gqd');
+    expect(e.lines[r + 1]).toBe('two of three');
+    e.keys('gq.');
+    expect(e.lines[r + 2]).toBe('three of three');
+  });
+
   it('lesson 1: fz lands on the z of crazy', () => {
     const words = lineWith('crazy lazy puzzle');
     const e = new Harness([words.slice(words.indexOf('crazy'))]);
@@ -118,6 +260,19 @@ describe('tutorial practice lines do what they say', () => {
     expect(e.lastEx).toBe('s/bad/good/');
   });
 
+  it('lesson 11: qafexpq records the teh-fix; gqa and gq. finish the line', () => {
+    const line = lineWith('teh teh teh');
+    // the claim only holds if the broken word appears nowhere earlier in the
+    // sentence — the cursor lands on the FIRST occurrence
+    expect(line.indexOf('teh')).toBe(line.length - 'teh teh teh'.length);
+    const e = new Harness([line], 0, line.indexOf('teh'));
+    e.keys('qafexpq');
+    expect(e.state.macros['a']).toEqual(['f', 'e', 'x', 'p']);
+    e.keys('gqagq.');
+    expect(e.line.slice(-'the the the'.length)).toBe('the the the');
+    expect(e.line).not.toContain('teh');
+  });
+
   it('lesson 10: the mapping examples it quotes parse cleanly', () => {
     const line = lineWith(':config opens');
     expect(line).toContain('nmap - $');
@@ -150,15 +305,27 @@ describe('tutorial document lifecycle (real adapter, fake plugin)', () => {
     expect(doc!.isDocument).toBe(true);
     expect(world.storage.get('vim-tutorial-doc-id')).toBe(doc!._id);
     expect(world.openedRemIds).toContain(doc!._id);
-    // top-level children = the indent-0 lines, in order
+    // top-level children = the indent-0 lines (titles + spacers), in order
     const tops = await doc!.getChildrenRem();
     const wantTops = TUTORIAL_LINES.filter((l) => l.indent === 0);
     expect(tops.map((r) => r.text.join(''))).toEqual(wantTops.map((l) => l.text));
+    // lesson titles carry the vimtutor look (/h3 + blue bullet); spacers stay plain
+    tops.forEach((rem, i) => {
+      if (wantTops[i].heading) {
+        expect(rem.fontSize, wantTops[i].text).toBe('H3');
+        expect(rem.highlightColor, wantTops[i].text).toBe('Blue');
+      } else {
+        expect(rem.fontSize).toBeUndefined();
+        expect(rem.highlightColor).toBeUndefined();
+      }
+    });
     // nested lines hang under their preceding indent-0 line
     const lesson0kids = await tops[0].getChildrenRem();
-    expect(lesson0kids.map((r) => r.text.join(''))).toEqual(
-      [TUTORIAL_LINES[1], TUTORIAL_LINES[2], TUTORIAL_LINES[3]].map((l) => l.text)
-    );
+    const wantKids: string[] = [];
+    for (let i = 1; i < TUTORIAL_LINES.length && TUTORIAL_LINES[i].indent === 1; i++)
+      wantKids.push(TUTORIAL_LINES[i].text);
+    expect(wantKids.length).toBeGreaterThanOrEqual(2);
+    expect(lesson0kids.map((r) => r.text.join(''))).toEqual(wantKids);
   });
 
   it('reopening does not create a second copy', async () => {

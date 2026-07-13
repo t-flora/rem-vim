@@ -6,8 +6,8 @@
   "repoUrl": "https://github.com/onegraund/remnote-vim",
   "version": {
     "major": 0,
-    "minor": 1,
-    "patch": 0
+    "minor": 2,
+    "patch": 1
   },
   "theme": [],
   "enableOnMobile": false,

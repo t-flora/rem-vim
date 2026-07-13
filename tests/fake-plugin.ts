@@ -33,6 +33,8 @@ export class FakeRem {
   parent: string | null = null;
   childIds: string[] = [];
   isDocument = false;
+  fontSize: 'H1' | 'H2' | 'H3' | undefined;
+  highlightColor: string | undefined;
 
   constructor(
     private world: FakeWorld,
@@ -68,6 +70,14 @@ export class FakeRem {
   }
   async setIsDocument(v: boolean) {
     this.isDocument = v;
+  }
+  async setFontSize(size: 'H1' | 'H2' | 'H3' | undefined) {
+    this.world.log('rem', 'setFontSize', this._id, size ?? '');
+    this.fontSize = size;
+  }
+  async setHighlightColor(color: string) {
+    this.world.log('rem', 'setHighlightColor', this._id, color);
+    this.highlightColor = color;
   }
   async setParent(parent: string | FakeRem | null, pos?: number) {
     const pid = typeof parent === 'string' ? parent : (parent?._id ?? null);

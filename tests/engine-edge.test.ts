@@ -370,8 +370,11 @@ describe('counts in odd positions', () => {
   });
 
   it('count then a non-command key aborts cleanly', () => {
+    // ']' reaches the engine (it's stolen for text objects / f-args) but has
+    // no standalone normal-mode command — 'q' used to play this role until
+    // it became the macro-record key.
     const e = h('abc', 0, 0);
-    e.keys('3q');
+    e.keys('3]');
     e.keys('x');
     expect(e.line).toBe('bc'); // the count did not leak into x
   });
