@@ -106,10 +106,14 @@ keystroke → adapter (RemNote-facing) → engine (pure) → Action[] → adapte
   model — lessons are real bullets edited with the real bindings), content
   in `src/adapter/tutorialDoc.ts` (SDK-free, so tests verify every practice
   line's claim against the Harness), lifecycle in `VimAdapter.openTutorial`
-  (create + seed once, id pinned in synced storage like the `:config` doc,
-  `:tutorial`/`:vimtutor`/palette command reopen it, deleting it re-seeds).
-  Auto-opened once on first activation, gated on the `vim-tutorial-seen`
-  synced flag set in `index.tsx` after a successful open.
+  / `ensureTutorialDoc` (create + seed once, id pinned in synced storage like
+  the `:config` doc, `:tutorial`/`:vimtutor`/palette command reopen it,
+  deleting it re-seeds). Auto-opened once on first activation, gated on the
+  `vim-tutorial-seen` synced flag set in `index.tsx` after a successful open.
+  **Any edit to `TUTORIAL_LINES` must bump `TUTORIAL_VERSION`** (a pinned
+  content fingerprint in `tests/tutorial.test.ts` fails otherwise): copies
+  seeded from an older version are replaced on the next activation, the old
+  one kept renamed "Vim Tutorial (old copy)".
 - **`tests/harness.ts`** — `Harness`, a fake multi-line/multi-indent editor
   (`lines`/`indents`/`row`/`caret` arrays) that executes `Action`s the same way
   the real adapter does. Every new `Action` variant needs an implementation

@@ -71,6 +71,10 @@ async function onActivate(plugin: ReactRNPlugin) {
   if (!tutorialSeen) {
     await adapter.openTutorial();
     await plugin.storage.setSynced(TUTORIAL_SEEN_KEY, true);
+  } else {
+    // Already onboarded: only swap a copy seeded from older lessons for the
+    // current ones (a toast says so; nothing auto-opens).
+    await adapter.refreshTutorialIfOutdated();
   }
 
   // e2e hook: lets the Playwright driver reach the plugin API inside

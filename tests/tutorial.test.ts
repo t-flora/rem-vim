@@ -13,7 +13,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { parseMappings } from '../src/adapter/mappings';
-import { TUTORIAL_DOC_NAME, TUTORIAL_LINES } from '../src/adapter/tutorialDoc';
+import {
+  TUTORIAL_DOC_NAME,
+  TUTORIAL_LINES,
+  TUTORIAL_OLD_NAME,
+  TUTORIAL_VERSION,
+} from '../src/adapter/tutorialDoc';
 import { VimAdapter } from '../src/adapter/adapter';
 import { __stub } from './sdk-stub';
 import { drain, FakeWorld } from './fake-plugin';
@@ -43,7 +48,7 @@ describe('tutorial document content structure', () => {
 
   it('lesson titles are headings, each later one preceded by exactly one blank spacer', () => {
     const heads = TUTORIAL_LINES.filter((l) => l.heading);
-    expect(heads.length).toBeGreaterThanOrEqual(13); // 12 lessons + The end
+    expect(heads.length).toBeGreaterThanOrEqual(15); // 14 lessons + The end
     for (const h of heads) expect(h.indent).toBe(0);
     expect(TUTORIAL_LINES[0].heading).toBe(true); // no spacer before the first
     TUTORIAL_LINES.forEach((l, i) => {
@@ -68,8 +73,26 @@ describe('tutorial document content structure', () => {
       else if (l.text.startsWith('Practice:')) counts[counts.length - 1]++;
     }
     counts.pop(); // 'The end' is a sign-off, not a lesson
-    expect(counts.length).toBe(12); // lessons 0–11
+    expect(counts.length).toBe(14); // lessons 0–13
     for (const n of counts) expect(n).toBeGreaterThanOrEqual(2);
+  });
+
+  it('TUTORIAL_VERSION is bumped whenever the lessons change', () => {
+    // FNV-1a over the serialized lines: any edit changes it. Changed the
+    // lessons on purpose? Bump TUTORIAL_VERSION in tutorialDoc.ts (copies
+    // seeded from the old text get replaced on upgrade), then pin the new
+    // fingerprint here next to it.
+    const json = JSON.stringify(TUTORIAL_LINES);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < json.length; i++) {
+      h ^= json.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    const fingerprint = h.toString(16).padStart(8, '0');
+    expect({ version: TUTORIAL_VERSION, fingerprint }).toEqual({
+      version: 2,
+      fingerprint: 'd146091f',
+    });
   });
 });
 
@@ -280,6 +303,61 @@ describe('tutorial practice lines do what they say', () => {
     const { diagnostics } = parseMappings(['nmap - $', 'unmap ,']);
     expect(diagnostics).toEqual([]);
   });
+
+  it('lesson 12: dth on unhappy deletes up to the h and keeps it', () => {
+    const line = lineWith('keeps the h itself: unhappy');
+    expect(line.endsWith(': unhappy')).toBe(true); // "the last word" really is unhappy
+    const e = new Harness([line], 0, line.lastIndexOf('unhappy'));
+    e.keys('dth');
+    expect(e.line.endsWith(': happy')).toBe(true);
+  });
+
+  it('lesson 12: dib empties call(this, that) from anywhere inside the brackets', () => {
+    const line = lineWith('call(this, that)');
+    // the only round brackets on the line are the practice pair
+    expect(line.split('(').length - 1).toBe(1);
+    for (const inside of ['this', 'that']) {
+      const e = new Harness([line], 0, line.indexOf(inside));
+      e.keys('dib');
+      expect(e.line.endsWith('call()')).toBe(true);
+    }
+  });
+
+  it("lesson 12: ci' clears the quoted greeting and enters insert mode", () => {
+    const line = lineWith("'hello there'");
+    // i' pairs quotes from the line start: nothing may come before the
+    // greeting's own quotes (the ci' mention itself comes after them)
+    expect(line.indexOf("'")).toBe(line.indexOf("'hello there'"));
+    const e = new Harness([line], 0, line.indexOf('hello'));
+    e.keys("ci'");
+    expect(e.mode).toBe('insert');
+    expect(e.line).toContain("greeting '' is dull");
+    expect(e.line).not.toContain('hello there');
+  });
+
+  it('lesson 13: Ctrl-A from the line start bumps the lives, 5 Ctrl-X eats five apples', () => {
+    const lives = lineWith('9 lives left');
+    const e = new Harness([lives]);
+    e.keys('<c-a>');
+    expect(e.line).toContain('10 lives left');
+    const apples = lineWith('12 apples');
+    const e2 = new Harness([apples]);
+    e2.keys('5<c-x>');
+    expect(e2.line).toContain('7 apples in the basket');
+    expect(e2.line).toContain('press 5 and then'); // only the first number changed
+  });
+
+  it('lesson 13: gj glues the split sentence back into one bullet', () => {
+    const first = lineWith('got split across');
+    const r = texts.indexOf(first);
+    const second = texts[r + 1];
+    expect(second.startsWith('two bullets')).toBe(true);
+    expect(TUTORIAL_LINES[r].indent).toBe(TUTORIAL_LINES[r + 1].indent); // siblings
+    const e = new Harness(texts, r, 0);
+    e.keys('gj');
+    expect(e.lines[r]).toBe(`${first} ${second}`);
+    expect(e.lines).toHaveLength(texts.length - 1);
+  });
 });
 
 describe('tutorial document lifecycle (real adapter, fake plugin)', () => {
@@ -357,6 +435,52 @@ describe('tutorial document lifecycle (real adapter, fake plugin)', () => {
     expect(tutorialDoc(world)).toBeDefined();
     expect(world.openedRemIds).toContain(tutorialDoc(world)!._id);
   });
+
+  it('a fresh copy records the lesson version it was seeded from', async () => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    expect(world.storage.get('vim-tutorial-version')).toBe(TUTORIAL_VERSION);
+  });
+
+  it.each([
+    ['seeded before versioning (no version stored)', undefined],
+    ['seeded from an older version', TUTORIAL_VERSION - 1],
+  ])('a copy %s is replaced on :tutorial, the old one kept and renamed', async (_, stored) => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    const old = tutorialDoc(world)!;
+    if (stored === undefined) world.storage.delete('vim-tutorial-version');
+    else world.storage.set('vim-tutorial-version', stored);
+
+    await adapter.openTutorial();
+
+    const fresh = tutorialDoc(world)!;
+    expect(fresh._id).not.toBe(old._id);
+    expect(world.rems.get(old._id)?.text.join('')).toBe(TUTORIAL_OLD_NAME); // renamed, not deleted
+    expect(world.storage.get('vim-tutorial-doc-id')).toBe(fresh._id);
+    expect(world.storage.get('vim-tutorial-version')).toBe(TUTORIAL_VERSION);
+    expect(world.openedRemIds[world.openedRemIds.length - 1]).toBe(fresh._id);
+    expect(world.toasts.some((t) => t.includes(TUTORIAL_OLD_NAME))).toBe(true);
+    // the replacement is current: opening again leaves it alone
+    const remCount = world.rems.size;
+    await adapter.openTutorial();
+    expect(world.rems.size).toBe(remCount);
+  });
+
+  it('a failed re-seed leaves the outdated copy in place, pinned and openable', async () => {
+    const { world, adapter } = await boot();
+    await adapter.openTutorial();
+    const old = tutorialDoc(world)!;
+    world.storage.delete('vim-tutorial-version');
+    (world.plugin as { rem: { createRem: () => Promise<undefined> } }).rem.createRem = async () =>
+      undefined;
+
+    await adapter.openTutorial();
+
+    expect(tutorialDoc(world)!._id).toBe(old._id); // not renamed
+    expect(world.storage.get('vim-tutorial-doc-id')).toBe(old._id);
+    expect(world.openedRemIds[world.openedRemIds.length - 1]).toBe(old._id);
+  });
 });
 
 describe('first-activation gating (real onActivate)', () => {
@@ -392,5 +516,31 @@ describe('first-activation gating (real onActivate)', () => {
     await world.commands.get('vim-tutorial')!.action();
     expect(world.openedRemIds.filter((id) => id === doc._id)).toHaveLength(2);
     expect([...world.rems.values()].filter((r) => r.text.join('') === TUTORIAL_DOC_NAME)).toHaveLength(1);
+  });
+
+  it('a later activation replaces an outdated copy without opening it', async () => {
+    const world = new FakeWorld();
+    await activate(world); // first run: seeds + opens, sets the seen flag
+    const old = tutorialDoc(world)!;
+    world.storage.delete('vim-tutorial-version'); // as if seeded by 0.2.1/0.2.2
+    const opens = world.openedRemIds.length;
+
+    await activate(world); // the upgrade
+
+    const fresh = tutorialDoc(world)!;
+    expect(fresh._id).not.toBe(old._id);
+    expect(world.rems.get(old._id)?.text.join('')).toBe(TUTORIAL_OLD_NAME);
+    expect(world.openedRemIds).toHaveLength(opens); // refreshed, not opened
+    expect(world.toasts.some((t) => t.includes(';tutorial opens it'))).toBe(true);
+  });
+
+  it('a later activation with a current copy changes nothing', async () => {
+    const world = new FakeWorld();
+    await activate(world);
+    const remCount = world.rems.size;
+    const opens = world.openedRemIds.length;
+    await activate(world);
+    expect(world.rems.size).toBe(remCount);
+    expect(world.openedRemIds).toHaveLength(opens);
   });
 });

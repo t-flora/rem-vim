@@ -7,7 +7,12 @@ import {
 } from '@remnote/plugin-sdk';
 import { version as VIM_VERSION } from '../../package.json';
 import { handleKey, initialState } from '../engine/engine';
-import { TUTORIAL_DOC_NAME, TUTORIAL_LINES } from './tutorialDoc';
+import {
+  TUTORIAL_DOC_NAME,
+  TUTORIAL_LINES,
+  TUTORIAL_OLD_NAME,
+  TUTORIAL_VERSION,
+} from './tutorialDoc';
 import { stopsBetween } from '../engine/motions';
 import { Action, Mode, Snapshot, VimState } from '../engine/types';
 import { hostDocument, readDomCaret, setDomCaret } from './domCaret';
@@ -2141,6 +2146,9 @@ export class VimAdapter {
   // ------------------------------------------------- tutorial (:tutorial)
 
   private static readonly TUTORIAL_ID_KEY = 'vim-tutorial-doc-id';
+  /** The TUTORIAL_VERSION the pinned document was seeded from (absent on
+   * copies seeded before versioning — those count as outdated). */
+  private static readonly TUTORIAL_VERSION_KEY = 'vim-tutorial-version';
 
   /** Resolve the tutorial document: pinned id first, then title search —
    * the exact `findConfigDoc` dance, for the practice document. */
@@ -2175,38 +2183,89 @@ export class VimAdapter {
    * command and the one-time first-activation auto-open (index.tsx).
    */
   async openTutorial() {
-    let doc = await this.findTutorialDoc();
-    if (!doc) {
-      const created = await this.plugin.rem.createRem();
-      if (!created) {
-        await this.plugin.app.toast(`Could not create the "${TUTORIAL_DOC_NAME}" document`);
-        return;
-      }
-      await created.setText([TUTORIAL_DOC_NAME]);
-      await created.setIsDocument(true);
-      // Seed with one parent stack: indent 0 hangs off the doc, indent 1 off
-      // the most recent indent-0 bullet. Positions count per parent.
-      let lastTop: string | null = null;
-      const pos: Record<string, number> = {};
-      for (const line of TUTORIAL_LINES) {
-        const kid = await this.plugin.rem.createRem();
-        if (!kid) continue;
-        const parentId = line.indent === 1 && lastTop ? lastTop : created._id;
-        await kid.setParent(parentId, (pos[parentId] = (pos[parentId] ?? -1) + 1));
-        await kid.setText([line.text]);
-        if (line.heading) {
-          // Lesson titles get the vimtutor look: /h3 heading, blue bullet.
-          await kid.setFontSize('H3');
-          await kid.setHighlightColor('Blue');
-        }
-        if (line.indent === 0) lastTop = kid._id;
-      }
-      this.tutorialRemId = created._id;
-      await this.plugin.storage.setSynced(VimAdapter.TUTORIAL_ID_KEY, created._id);
-      doc = created;
+    const { doc, replaced } = await this.ensureTutorialDoc(true);
+    if (!doc) return;
+    if (replaced) {
+      await this.plugin.app.toast(
+        `Vim Tutorial updated with new lessons — your old copy is kept as "${TUTORIAL_OLD_NAME}".`
+      );
     }
     await this.recordJump(); // :tutorial is a jump — Ctrl-O returns
     await this.plugin.window.openRem(doc);
+  }
+
+  /**
+   * Activation-time half of the versioning (index.tsx, for users who have
+   * already seen the tutorial): replace an outdated copy and say so, without
+   * opening anything. Someone who deleted the tutorial gets nothing back.
+   */
+  async refreshTutorialIfOutdated() {
+    const { replaced } = await this.ensureTutorialDoc(false);
+    if (replaced) {
+      await this.plugin.app.toast(
+        `The Vim Tutorial has new lessons — ;tutorial opens it. Your old copy is kept as "${TUTORIAL_OLD_NAME}".`
+      );
+    }
+  }
+
+  /**
+   * The current tutorial document: the existing copy if it was seeded from
+   * this TUTORIAL_VERSION; a fresh copy replacing it if it was seeded from an
+   * older one (or before versioning — no version stored); a fresh copy when
+   * there is none and `create`. Replacing never deletes: the old copy is the
+   * user's document and may hold their notes, so it's renamed
+   * TUTORIAL_OLD_NAME (which also takes it out of findTutorialDoc's
+   * by-name reach). Seeding goes first so a failed seed leaves the old copy
+   * in place and still pinned — the next call simply retries.
+   */
+  private async ensureTutorialDoc(
+    create: boolean
+  ): Promise<{ doc: RemObj | null; replaced: boolean }> {
+    const existing = await this.findTutorialDoc();
+    if (existing) {
+      const seededFrom = await this.plugin.storage.getSynced<number>(
+        VimAdapter.TUTORIAL_VERSION_KEY
+      );
+      if (seededFrom === TUTORIAL_VERSION) return { doc: existing, replaced: false };
+      const fresh = await this.seedTutorialDoc();
+      if (!fresh) return { doc: existing, replaced: false };
+      await existing.setText([TUTORIAL_OLD_NAME]);
+      return { doc: fresh, replaced: true };
+    }
+    return { doc: create ? await this.seedTutorialDoc() : null, replaced: false };
+  }
+
+  /** Create the "Vim Tutorial" document from TUTORIAL_LINES and pin it
+   * (id + the TUTORIAL_VERSION it was built from) in synced storage. */
+  private async seedTutorialDoc(): Promise<RemObj | null> {
+    const created = await this.plugin.rem.createRem();
+    if (!created) {
+      await this.plugin.app.toast(`Could not create the "${TUTORIAL_DOC_NAME}" document`);
+      return null;
+    }
+    await created.setText([TUTORIAL_DOC_NAME]);
+    await created.setIsDocument(true);
+    // Seed with one parent stack: indent 0 hangs off the doc, indent 1 off
+    // the most recent indent-0 bullet. Positions count per parent.
+    let lastTop: string | null = null;
+    const pos: Record<string, number> = {};
+    for (const line of TUTORIAL_LINES) {
+      const kid = await this.plugin.rem.createRem();
+      if (!kid) continue;
+      const parentId = line.indent === 1 && lastTop ? lastTop : created._id;
+      await kid.setParent(parentId, (pos[parentId] = (pos[parentId] ?? -1) + 1));
+      await kid.setText([line.text]);
+      if (line.heading) {
+        // Lesson titles get the vimtutor look: /h3 heading, blue bullet.
+        await kid.setFontSize('H3');
+        await kid.setHighlightColor('Blue');
+      }
+      if (line.indent === 0) lastTop = kid._id;
+    }
+    this.tutorialRemId = created._id;
+    await this.plugin.storage.setSynced(VimAdapter.TUTORIAL_ID_KEY, created._id);
+    await this.plugin.storage.setSynced(VimAdapter.TUTORIAL_VERSION_KEY, TUTORIAL_VERSION);
+    return created;
   }
 
   /** `:map` — list active mappings + config diagnostics (toasts, like :marks). */
