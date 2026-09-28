@@ -75,7 +75,8 @@ public documentation, so a release is more than a push:
    anything that changes existing keys under "Upgrading" / "Changed".
 4. README (features, cheat sheet, Ex table, limitations), the `;help` sheet,
    DEVELOPMENT.md §0.5, and the manifest `description` (the store listing)
-   match what ships.
+   match what ships. The store rejects a `description` over 200 characters
+   (`tests/manifest.test.ts` checks it and the other schema limits).
 5. Tutorial lessons changed? `TUTORIAL_VERSION` bumped (the suite enforces it).
 6. `npm run check-types`, `npm test`, `npm run build` all green; live-check
    the build in RemNote (the debug readout shows `vim <version>@…`).

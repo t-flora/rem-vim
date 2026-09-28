@@ -2522,7 +2522,7 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 ## 0.5 Feature status (what works live)
 
 Formerly VIM_STATUS.md; trimmed to what a contributor needs. Unit suite:
-**695/695** tests green as of 0.2.3 (run `npx vitest run --dir tests` — don't trust
+**698/698** tests green as of 0.2.3 (run `npx vitest run --dir tests` — don't trust
 this number, verify; a bare `npm test` also collects the stale
 `.claude/worktrees/*` suite copies and inflates it).
 

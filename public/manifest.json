@@ -11,7 +11,7 @@
   },
   "theme": [],
   "enableOnMobile": false,
-  "description": "Modal vim-style editing for RemNote: normal/insert/visual modes, motions, operators, text objects, counts, registers, marks, macros, search, an Ex command line, custom keybindings and an interactive tutorial.",
+  "description": "Modal vim-style editing for RemNote: motions, operators, text objects, counts, registers, marks, macros, search, an Ex command line, custom keybindings and an interactive tutorial.",
   "requestNative": false,
   "requiredScopes": [
     {
