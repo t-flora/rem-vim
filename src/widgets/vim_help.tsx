@@ -214,6 +214,7 @@ function VimHelp() {
             <Row keys={['g', 'g']} desc="top of document" />
             <Row keys={['g', 'e']} desc="bottom of document  (vim: G)" />
             <Row keys={['f', '·']} desc="jump onto next ‘·’ in the line" />
+            <Row keys={['t', '·']} desc="jump to just before the next ‘·’  (dt· deletes up to it)" />
             <Row keys={['g', 'f', '·']} desc="jump onto previous ‘·’ in the line  (vim: F)" />
             <Row keys={[',']} desc="repeat the last f/gf jump (reversed)" />
           </Section>

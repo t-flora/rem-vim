@@ -20,10 +20,24 @@
  *   title after the first is preceded by exactly one blank spacer bullet;
  * - the search lesson's 'needle' must appear exactly twice: once in the
  *   lesson, once near the bottom, so `space needle Enter` from the lesson
- *   really jumps forward.
+ *   really jumps forward;
+ * - any edit to TUTORIAL_LINES bumps TUTORIAL_VERSION (a pinned content
+ *   fingerprint fails the suite otherwise).
  */
 
 export const TUTORIAL_DOC_NAME = 'Vim Tutorial';
+
+/**
+ * Content version of TUTORIAL_LINES — bump it with EVERY edit to them. The
+ * seeded copy records the version it was built from; an older copy is
+ * replaced on the next activation, the old one kept under TUTORIAL_OLD_NAME
+ * (see VimAdapter.ensureTutorialDoc). Copies seeded before versioning
+ * existed carry no version and count as outdated — that content was v1.
+ */
+export const TUTORIAL_VERSION = 2;
+
+/** What an outdated copy is renamed to when a fresh one replaces it. */
+export const TUTORIAL_OLD_NAME = 'Vim Tutorial (old copy)';
 
 export interface TutorialLine {
   text: string;
@@ -126,6 +140,21 @@ export const TUTORIAL_LINES: TutorialLine[] = [
   c('xxtwo of three'),
   c('xxthree of three'),
   c('One catch: text you type in insert mode is not captured (RemNote owns those keys), so build macros from normal-mode commands — motions, x, r, dw, p, even ; commands. qaq records nothing and simply empties register a.'),
+
+  gap(),
+  L('Lesson 12 — precise edits'),
+  c("t is the careful sibling of f: it stops one character before its target instead of on it, so dt deletes up to a character and keeps that character. Text objects also work on pairs: dib deletes inside round brackets (vim spells it di( but that bracket needs Shift, so b stands in), di[ empties square brackets, and i' and a' work on quotes. Swap the d for c to change instead of delete, or y to copy."),
+  c('Practice: stand on the first letter of the last word and press dth — it deletes up to the h and keeps the h itself: unhappy'),
+  c('Practice: put the cursor anywhere between the brackets and press dib to empty them: call(this, that)'),
+  c("Practice: the greeting 'hello there' is dull — cursor inside the quotes, press ci' and type a better one."),
+
+  gap(),
+  L('Lesson 13 — numbers and bullets'),
+  c('Ctrl-A adds one to the number under or after the cursor and Ctrl-X subtracts one; a count adds or subtracts more, so 5 Ctrl-X takes five away. gj glues the next bullet onto this one with a space (vim: J), and the joined bullet brings its children along.'),
+  c('Practice: 9 lives left — from the start of this line, Ctrl-A adds one more.'),
+  c('Practice: 12 apples in the basket — from the start of this line, press 5 and then Ctrl-X to eat five of them.'),
+  c('Practice: this sentence got split across'),
+  c('two bullets — press gj on the first half to glue them back together.'),
 
   gap(),
   L('The end'),

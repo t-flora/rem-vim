@@ -13,7 +13,7 @@ The exact keystrokes, starting from a known state (e.g. "cursor on `foo bar`, pr
 **What happened instead?**
 
 **Environment**
-- Plugin version:
+- Plugin version (the bottom-left readout starts `vim <version>@…`, e.g. `vim 0.2.3@…`):
 - RemNote version (Settings → About):
 - Platform: desktop app / web / mobile
 - OS:

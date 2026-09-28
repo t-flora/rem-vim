@@ -39,7 +39,7 @@ talking to RemNote (an `Action` case, an SDK call, a key to steal) →
 
 ```bash
 npm run check-types   # tsc
-npm test              # engine unit tests (Vitest) — fast, deterministic, no RemNote
+npm test              # unit tests (Vitest) — fast, deterministic, no RemNote
 npm run e2e           # live end-to-end against a running RemNote (local only)
 ```
 
@@ -53,9 +53,38 @@ DEVELOPMENT.md §7 for how to drive it.
 
 - `npm run check-types` and `npm test` are green.
 - If the change is user-visible, update the `;help` sheet
-  (`src/widgets/vim_help.tsx`) and the feature status in DEVELOPMENT.md §0.5.
+  (`src/widgets/vim_help.tsx`), the README, and the feature status in
+  DEVELOPMENT.md §0.5, and add a line under an "Unreleased" heading in
+  CHANGELOG.md.
+- If you touched the tutorial's lessons (`src/adapter/tutorialDoc.ts`), bump
+  `TUTORIAL_VERSION` — the suite fails until you do, and users' copies are
+  replaced on upgrade.
 - Note whether you live-verified in the real app — many bugs only show up
   against RemNote's async data layer, not the fake editor (DEVELOPMENT.md §6, §9).
+
+## Releasing (maintainers)
+
+The plugin is live on the RemNote Plugin Store and this repo's README is its
+public documentation, so a release is more than a push:
+
+1. **Check the scope first:** `git fetch && git log --oneline origin/main..main`
+   is everything the push will publish — make sure the docs below cover all
+   of it, not just the latest change.
+2. Bump the version in **both** `package.json` and `public/manifest.json`.
+3. `CHANGELOG.md`: turn "Unreleased" into the new version, dated. Call out
+   anything that changes existing keys under "Upgrading" / "Changed".
+4. README (features, cheat sheet, Ex table, limitations), the `;help` sheet,
+   DEVELOPMENT.md §0.5, and the manifest `description` (the store listing)
+   match what ships.
+5. Tutorial lessons changed? `TUTORIAL_VERSION` bumped (the suite enforces it).
+6. `npm run check-types`, `npm test`, `npm run build` all green; live-check
+   the build in RemNote (the debug readout shows `vim <version>@…`).
+7. Merge to `main`, push, wait for CI.
+8. `gh release create v<version> PluginZip.zip` with that version's CHANGELOG
+   section as the notes.
+9. Upload the same `PluginZip.zip` to the RemNote Plugin Store. RemNote
+   reviews it before it goes live, so the store lags the GitHub release for
+   a while — say so in the release notes.
 
 ## Reporting bugs
 

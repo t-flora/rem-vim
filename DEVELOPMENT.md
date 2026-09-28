@@ -15,6 +15,58 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-09-28 (later) — release pass for 0.2.3: README, CHANGELOG, store description, tutorial versioning + lessons 12–13 — on `release/0.2.3`, NOT pushed
+
+The issue-#1 push (entry below) published 46 never-pushed commits with no
+release pass — README still described 0.1.0, no changelog, stale store
+description. The user called it out; this round is that pass. **State: two
+commits on branch `release/0.2.3`, not merged, not pushed — the user reviews
+first.**
+
+- **Tutorial versioning:** `TUTORIAL_VERSION` (2) in `tutorialDoc.ts` plus a
+  synced `vim-tutorial-version` key. `ensureTutorialDoc(create)`
+  (adapter.ts) replaces an outdated copy — missing version counts as
+  outdated, i.e. every copy seeded by 0.2.1/0.2.2 — by seeding a fresh doc
+  FIRST, then renaming the old one "Vim Tutorial (old copy)" (never
+  deleted; a failed seed leaves it in place and pinned). Runs on
+  `:tutorial` and, via `refreshTutorialIfOutdated()`, on activation for
+  users with the seen flag (toast, no auto-open). A pinned FNV-1a
+  fingerprint of `TUTORIAL_LINES` fails the suite if lessons change without
+  a bump.
+- **Lessons 12–13:** `dth` on "unhappy", `dib` on `call(this, that)`, `ci'`
+  on a quoted greeting (no apostrophe may precede the target quotes — `i'`
+  pairs from the line start); Ctrl-A / `5` Ctrl-X from the line start (the
+  target number must be the first digit run on the line), `gj` on a
+  sentence split across two bullets. `:help` gained the missing `t<c>` row.
+- **Docs:** README rewritten for 0.2 (store-first install, "New in 0.2" +
+  upgrade heads-up for Space and `gd`/`gu`, Getting started, extended
+  Shift-blind table, Search/Macros rows, Ex table, palette + setting,
+  limitations; fixed the wrong `:e` description — it searches the whole
+  KB). New CHANGELOG.md: its "Fixed" list only has bugs 0.1.0 users
+  actually had (the search-mode crash, the `gs` placement bug and the
+  insert-typing race were introduced and fixed between releases).
+  CONTRIBUTING gained a "Releasing" checklist; the bug template asks for the
+  `vim <version>@…` readout; manifest description updated.
+- **Tests:** 695 (12 new), mutation-checked four ways (lesson edit without
+  bump, version check disabled, rename-before-seed order, activation refresh
+  removed — each caught). Version 0.2.2 → **0.2.3** (readout `vim 0.2.3@…`).
+- **Store status (per the user):** the RemNote Plugin Store still serves
+  **0.1.0** (= GitHub's `cffb8a7` state), and every store update waits on
+  RemNote's review. So the README now says the store can lag a release
+  (0.1.0's readout has no version number — that's how users tell). And
+  issue #1's reporter was almost certainly on 0.1.0, which had **no**
+  steal-heal timer (`8eb10da` came later): the timer can't explain their
+  report, which leaves the RemNote-side steal-GC loop (§9) as the leading
+  hypothesis. The 0.1.0 → 0.2.3 update itself unloads 0.1.0 through the
+  same `unregister()` path, so it may show that error once — nothing the
+  new version can do about the old one's unload.
+- **NEXT, only after the user's OK:** merge `--no-ff` to main, push, wait for
+  CI, `npm run build`, `gh release create v0.2.3 PluginZip.zip` with the
+  CHANGELOG 0.2.3 section as notes; the user uploads the zip to the store.
+  Live check worth doing first: the user's own RemNote has a pre-versioning
+  tutorial copy → reload should toast and leave "Vim Tutorial (old copy)"
+  next to a fresh 14-lesson "Vim Tutorial".
+
 ### 2026-09-28 — issue #1 (disable/uninstall/settings misbehave): plugin teardown added; RemNote-side steal loop found; v0.2.2 — NOT live-verified
 
 GitHub issue #1 (external reporter, 2026-09-09): "Bug with managing
@@ -2425,15 +2477,15 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 
 ## 0.5 Feature status (what works live)
 
-Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
-**664/664** unit tests green (run `npx vitest run --dir tests` — don't trust
+Formerly VIM_STATUS.md; trimmed to what a contributor needs. Unit suite:
+**695/695** tests green as of 0.2.3 (run `npx vitest run --dir tests` — don't trust
 this number, verify; a bare `npm test` also collects the stale
 `.claude/worktrees/*` suite copies and inflates it).
 
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
 - **Modes** — `i` insert / `Esc` normal / `v` charwise visual / `vv`
-  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line / `space`
+  visual-line (`v`+`j/k` auto-upgrades) / `;` command line / `space`
   incremental search; mode badge bottom-right; per-mode key stealing (insert
   releases everything but Esc).
 - **Motions** — `h l 0 w b e f<c> t<c>` `,`(reverse find repeat), counts
@@ -2544,21 +2596,36 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   outside insert mode.
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
 - **Getting-started tutorial** — a seeded **"Vim Tutorial" practice
-  document** (vimtutor model: 12 lessons as real bullets, every command
+  document** (vimtutor model: 14 lessons as real bullets, every command
   practiced in place with the real bindings; ≥2 practice bullets per lesson;
   titles seeded as H3 headings with blue bullets, one blank spacer bullet
-  between lessons — restyled 2026-07-13, H3/Blue rendering not yet checked in
-  a live RemNote; content in
+  between lessons — restyled 2026-07-13, H3/Blue rendering checked live by
+  the user 2026-09-28; content in
   `src/adapter/tutorialDoc.ts`, lifecycle mirrors the `:config` doc — id
   pinned in synced storage, deleting the doc re-seeds fresh). Auto-opens
   once on first activation (`vim-tutorial-seen` flag), reopens via
-  `:tutorial`/`:vimtutor`/**"Vim: Tutorial"**. Live-verified 2026-07-11
+  `:tutorial`/`:vimtutor`/**"Vim: Tutorial"**. **Versioned since 0.2.3:**
+  the copy records the `TUTORIAL_VERSION` it was seeded from
+  (`vim-tutorial-version`); an outdated copy is replaced on `:tutorial` or
+  on activation (toast, no auto-open) and kept renamed "Vim Tutorial (old
+  copy)" — live-checked by the user 2026-09-28 on 1.28.28 (first reload:
+  toast + "(old copy)" kept with its content; second reload: nothing).
+  Lessons 12 (`dt<c>`, `dib`, `ci'`) and 13 (Ctrl-A/Ctrl-X, `gj`) added in
+  0.2.3, Harness-verified and live-checked by the user 2026-09-28.
+  Live-verified 2026-07-11
   (`e2e/tutorial.mjs` 8/8 incl. fixing the caaat exercise with real keys +
   a separate relaunch check of the auto-open branch); unit coverage in
   `tests/tutorial.test.ts` (every practice line's claim runs against the
   Harness on the line's own text) — see the 2026-07-11 §0 entries. The
   first floating-widget version was replaced the same day (user: a
   walkthrough you can't type into misses the point of vim).
+- **Plugin lifecycle** — disable/uninstall runs `onDeactivate` →
+  `VimAdapter.stop()` (0.2.2+): heal timer cleared, every listener removed,
+  every key released, badge CSS emptied. Live-checked by the user
+  2026-09-28 on 1.28.28: after disable, typing is plain RemNote again;
+  re-enable brings the badge and keys back with no tutorial toast. RemNote
+  still shows an error popup (React #185) as the plugin unloads — a host
+  bug the plugin can't prevent (§9, the steal-GC bullet).
 
 Known limitations (beyond §9 platform blockers):
 
@@ -3079,7 +3146,8 @@ against RemNote 1.26.30):
   applyMode's insert release and eats typed text), and (3) ticks a 5s
   timer. Don't "optimize" these back to diffs.
   **Teardown side of the same code (issue #1, read from the 1.27.10 bundle
-  2026-09-28, NOT yet reproduced live):** that release is an unconditional
+  2026-09-28; REPRODUCED live the same night on 1.28.28, code unchanged in
+  the 1.28.32 JS update):** that release is an unconditional
   `setState` inside `componentDidUpdate` on a plain `Component`, and a
   stealer's key is never deleted from the singleton's state (release only
   empties its array). So once a plugin has stolen anything, any update
@@ -3093,6 +3161,23 @@ against RemNote 1.26.30):
   plugin, re-arming the loop), removes every listener, releases every key,
   clears the badge; `applyMode`/`syncEscapeSteal`/`render` are no-ops once
   `enabled` is false, so a key still in flight can't undo that.
+  **Every host path that unloads a plugin goes through `unregister()`**
+  (1.28.28): uninstall; updates, automatic or manual (`restartInDevMode` =
+  unregister + register); and the Plugins page's per-plugin record writer
+  (minified export `ot(id, changes)` in that build), which the Enabled,
+  auto-update and native toggles and the permission editor all call — it
+  unregisters on any change and re-registers if the plugin is still
+  enabled. That accounts for all three actions in issue #1 ("uninstall,
+  disable, or editing settings in plugin settings"), if "settings" there
+  means those Plugins-page options. Live evidence
+  (the user's debug log, disable on 1.28.28): exactly one `Minified React
+  error #185`, 14 ms after the toggle's `user_data` write; the snapshot
+  afterwards says `Enabled: false`, and per the user re-enabling worked
+  (badge and keys back). SDK side (0.0.46): `declareIndexPlugin` calls
+  `onActivate` from a React `useEffect` without awaiting it and
+  `onDeactivate` from that effect's cleanup, and the widget reports
+  `activateCompleted` on its own — a rejected `onActivate` is just an
+  unhandled rejection in the iframe; it never moves the host load state.
 - **The command line is shift-blind too** (typed Ex characters arrive through
   the same steal): capitals and shifted punctuation are UNTYPEABLE in
   `:commands` — `ALPHA` arrives as `alpha`, `$`→`4`, `%`→`5`, `(`→`9`,
