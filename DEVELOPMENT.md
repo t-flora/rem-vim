@@ -20,11 +20,20 @@ commit 122d18e).
 - **Released:** `release/0.2.3` merged `--no-ff` into main as 17e6b7a
   (built with `commit-tree` + `update-ref`, so checking out main never
   swapped the tree back to 0.2.2 under the dev server the user's RemNote
-  loads from), pushed, CI green (run 36481769024), GitHub release
-  **v0.2.3** with `PluginZip.zip` attached (sha256 `e9e27572…`, manifest
-  0.2.3; its README.md is the repo README). **The user uploads that zip to
-  the Plugin Store**; RemNote's review gates it, and until then the store
-  keeps serving 0.1.0.
+  loads from), pushed, CI green. **The store then rejected that zip**:
+  "description: String must contain at most 200 character(s)" (it was
+  208). The store validates manifest.json with the app's zod schema (read
+  from the 1.28.28 bundle): description ≤ 200, id 5–100 of
+  `[-_a-zA-Z0-9]`, name/author 3–100, URL fields must be URLs. The
+  description was the only violation, so f8b3091 shortened it (180; drops
+  "normal/insert/visual modes", which "Modal" covers) and added
+  `tests/manifest.test.ts` pinning those limits (698 tests). The user
+  chose to re-point the ~20-minute-old v0.2.3 tag rather than ship 0.2.4,
+  so the v0.2.3 GitHub release was deleted and recreated on f8b3091 (CI
+  run 36483530698 green) with the rebuilt `PluginZip.zip` (sha256
+  `6d7cf910…`; its README.md is the repo README). **The user uploads that
+  zip to the Plugin Store**; RemNote's review gates it, and until then
+  the store keeps serving 0.1.0.
 - **Live check (the user, RemNote 1.28.28):** the release checklist passed
   (tutorial refresh: toast, "(old copy)" kept, second reload a no-op;
   lessons 12–13; H3/blue titles; `;help`; smoke test; palette toggle;
