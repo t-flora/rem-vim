@@ -35,6 +35,13 @@ install. It's active right away — a `-- NORMAL --` badge appears bottom-right 
 and the **Vim Tutorial** opens once so you can learn the keys by using them
 (see [Getting started](#getting-started-the-vim-tutorial)).
 
+> RemNote reviews every store update before it goes live, so for a while
+> after a release the store can still hand out the previous version. This
+> README describes the latest release (see the [CHANGELOG](./CHANGELOG.md)).
+> To check which one you have, look at the small readout in the bottom-left
+> corner: from 0.2.3 on it starts with `vim 0.2.3@…`; 0.1.0's has no version
+> number in it (here is the [0.1.0 README](https://github.com/onegraund/remnote-vim/blob/452cb71/README.md)).
+
 ### From source (development build)
 
 ```bash

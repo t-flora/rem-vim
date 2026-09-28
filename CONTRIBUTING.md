@@ -82,7 +82,9 @@ public documentation, so a release is more than a push:
 7. Merge to `main`, push, wait for CI.
 8. `gh release create v<version> PluginZip.zip` with that version's CHANGELOG
    section as the notes.
-9. Upload the same `PluginZip.zip` to the RemNote Plugin Store.
+9. Upload the same `PluginZip.zip` to the RemNote Plugin Store. RemNote
+   reviews it before it goes live, so the store lags the GitHub release for
+   a while — say so in the release notes.
 
 ## Reporting bugs
 

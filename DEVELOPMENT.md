@@ -50,6 +50,16 @@ first.**
 - **Tests:** 695 (12 new), mutation-checked four ways (lesson edit without
   bump, version check disabled, rename-before-seed order, activation refresh
   removed — each caught). Version 0.2.2 → **0.2.3** (readout `vim 0.2.3@…`).
+- **Store status (per the user):** the RemNote Plugin Store still serves
+  **0.1.0** (= GitHub's `cffb8a7` state), and every store update waits on
+  RemNote's review. So the README now says the store can lag a release
+  (0.1.0's readout has no version number — that's how users tell). And
+  issue #1's reporter was almost certainly on 0.1.0, which had **no**
+  steal-heal timer (`8eb10da` came later): the timer can't explain their
+  report, which leaves the RemNote-side steal-GC loop (§9) as the leading
+  hypothesis. The 0.1.0 → 0.2.3 update itself unloads 0.1.0 through the
+  same `unregister()` path, so it may show that error once — nothing the
+  new version can do about the old one's unload.
 - **NEXT, only after the user's OK:** merge `--no-ff` to main, push, wait for
   CI, `npm run build`, `gh release create v0.2.3 PluginZip.zip` with the
   CHANGELOG 0.2.3 section as notes; the user uploads the zip to the store.
