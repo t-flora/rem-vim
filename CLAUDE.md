@@ -96,7 +96,10 @@ keystroke → adapter (RemNote-facing) → engine (pure) → Action[] → adapte
 - **`src/widgets/`** — plugin entry point (`index.tsx`'s `onActivate`,
   registers the `vim-toggle`/`vim-help`/`vim-config`/`vim-tutorial` commands
   and the `start-in-normal` setting, constructs the one `VimAdapter`, exposes
-  `window.__vim` for e2e) and the `:help` cheat-sheet floating widget
+  `window.__vim` for e2e; `onDeactivate` calls `VimAdapter.stop()`, which
+  must undo everything `start()` sets up — timer, listeners, steals, badge
+  CSS; DEVELOPMENT.md §9 has why a leftover re-steal matters) and the
+  `:help` cheat-sheet floating widget
   (`vim_help.tsx` — grabs real DOM focus on mount so plain `onKeyDown`
   handles its scrolling, no `stealKeys`). The getting-started tutorial is
   NOT a widget: it's a seeded **"Vim Tutorial" practice document** (vimtutor
