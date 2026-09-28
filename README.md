@@ -3,7 +3,7 @@
 **Modal, vim-style editing for the [RemNote](https://www.remnote.com) desktop app**, as a RemNote plugin.
 
 [![CI](https://github.com/onegraund/remnote-vim/actions/workflows/ci.yml/badge.svg)](https://github.com/onegraund/remnote-vim/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/onegraund/remnote-vim/blob/main/LICENSE)
 
 Normal / insert / visual modes, motions, operators, counts, registers, text
 objects, marks, dot-repeat, macros, whole-document search, an Ex command line,
@@ -16,7 +16,8 @@ https://github.com/user-attachments/assets/abfb4142-6f6b-4aa1-a06f-423b80e964cf
 
 > **New in 0.2:** macros (`q`/`gq`), whole-document search (`Space`), custom
 > keybindings (`:config`), the interactive **Vim Tutorial**, `gs` surround,
-> `gf`, `:10`-style line jumps and more — see the [CHANGELOG](./CHANGELOG.md).
+> `gf`, `:10`-style line jumps and more — see the
+> [CHANGELOG](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md).
 >
 > **Upgrading from 0.1?** `Space` now starts a search (it used to move right —
 > use `l`), and `gd`/`gu` are gone (use `Ctrl-D`/`Ctrl-U`).
@@ -37,7 +38,8 @@ and the **Vim Tutorial** opens once so you can learn the keys by using them
 
 > RemNote reviews every store update before it goes live, so for a while
 > after a release the store can still hand out the previous version. This
-> README describes the latest release (see the [CHANGELOG](./CHANGELOG.md)).
+> README describes the latest release (see the
+> [CHANGELOG](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md)).
 > To check which one you have, look at the small readout in the bottom-left
 > corner: from 0.2.3 on it starts with `vim 0.2.3@…`; 0.1.0's has no version
 > number in it (here is the [0.1.0 README](https://github.com/onegraund/remnote-vim/blob/452cb71/README.md)).
@@ -214,7 +216,9 @@ default). Turn it off to start in insert mode instead.
 ## Known limitations
 
 Most of these come from what a plugin is *allowed* to do inside RemNote's
-sandbox (the gory details live in [DEVELOPMENT.md](./DEVELOPMENT.md) §9):
+sandbox (the gory details live in
+[DEVELOPMENT.md](https://github.com/onegraund/remnote-vim/blob/main/DEVELOPMENT.md)
+§9):
 
 - **Capitals/symbols need synonyms** — the Shift-blind remaps above; `i{`/`i"`
   exist in the engine but can't be typed live. (`:config` mappings can put
@@ -233,6 +237,13 @@ sandbox (the gory details live in [DEVELOPMENT.md](./DEVELOPMENT.md) §9):
   construction.
 - The charwise-visual selection is a real text selection, so RemNote's floating
   formatting toolbar may pop up over it (harmless).
+- **RemNote may show an error popup when the plugin unloads** — on disable,
+  uninstall or update, or when you change the plugin's options on RemNote's
+  Plugins page (its debug log says `Minified React error #185`). That's a bug
+  in RemNote's key-capture code, which loops whenever a plugin that captured
+  keys is unloaded, so the plugin can't prevent it. Dismiss the popup: the
+  plugin still switches off and back on normally. Tracked in
+  [#1](https://github.com/onegraund/remnote-vim/issues/1).
 
 ## Privacy
 
@@ -256,10 +267,14 @@ e2e/            live end-to-end harness driving the real app over CDP
 public/         manifest.json
 ```
 
-See [**DEVELOPMENT.md**](./DEVELOPMENT.md) for the architecture deep-dive, the
-platform constraints, how to add commands, and the work log; see
-[**CONTRIBUTING.md**](./CONTRIBUTING.md) for the workflow and the release
-checklist, and [**CHANGELOG.md**](./CHANGELOG.md) for what changed when.
+See
+[**DEVELOPMENT.md**](https://github.com/onegraund/remnote-vim/blob/main/DEVELOPMENT.md)
+for the architecture deep-dive, the platform constraints, how to add
+commands, and the work log; see
+[**CONTRIBUTING.md**](https://github.com/onegraund/remnote-vim/blob/main/CONTRIBUTING.md)
+for the workflow and the release checklist, and
+[**CHANGELOG.md**](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md)
+for what changed when.
 
 ### Test
 
@@ -286,4 +301,4 @@ the zip that was uploaded to the store attached.
 
 ## License
 
-[MIT](./LICENSE) © onegraund
+[MIT](https://github.com/onegraund/remnote-vim/blob/main/LICENSE) © onegraund

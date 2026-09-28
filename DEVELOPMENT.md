@@ -2599,8 +2599,8 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   document** (vimtutor model: 14 lessons as real bullets, every command
   practiced in place with the real bindings; ≥2 practice bullets per lesson;
   titles seeded as H3 headings with blue bullets, one blank spacer bullet
-  between lessons — restyled 2026-07-13, H3/Blue rendering not yet checked in
-  a live RemNote; content in
+  between lessons — restyled 2026-07-13, H3/Blue rendering checked live by
+  the user 2026-09-28; content in
   `src/adapter/tutorialDoc.ts`, lifecycle mirrors the `:config` doc — id
   pinned in synced storage, deleting the doc re-seeds fresh). Auto-opens
   once on first activation (`vim-tutorial-seen` flag), reopens via
@@ -2608,15 +2608,24 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   the copy records the `TUTORIAL_VERSION` it was seeded from
   (`vim-tutorial-version`); an outdated copy is replaced on `:tutorial` or
   on activation (toast, no auto-open) and kept renamed "Vim Tutorial (old
-  copy)" — NOT yet live-verified, see the 2026-09-28 release entry in §0.
+  copy)" — live-checked by the user 2026-09-28 on 1.28.28 (first reload:
+  toast + "(old copy)" kept with its content; second reload: nothing).
   Lessons 12 (`dt<c>`, `dib`, `ci'`) and 13 (Ctrl-A/Ctrl-X, `gj`) added in
-  0.2.3, Harness-verified only. Live-verified 2026-07-11
+  0.2.3, Harness-verified and live-checked by the user 2026-09-28.
+  Live-verified 2026-07-11
   (`e2e/tutorial.mjs` 8/8 incl. fixing the caaat exercise with real keys +
   a separate relaunch check of the auto-open branch); unit coverage in
   `tests/tutorial.test.ts` (every practice line's claim runs against the
   Harness on the line's own text) — see the 2026-07-11 §0 entries. The
   first floating-widget version was replaced the same day (user: a
   walkthrough you can't type into misses the point of vim).
+- **Plugin lifecycle** — disable/uninstall runs `onDeactivate` →
+  `VimAdapter.stop()` (0.2.2+): heal timer cleared, every listener removed,
+  every key released, badge CSS emptied. Live-checked by the user
+  2026-09-28 on 1.28.28: after disable, typing is plain RemNote again;
+  re-enable brings the badge and keys back with no tutorial toast. RemNote
+  still shows an error popup (React #185) as the plugin unloads — a host
+  bug the plugin can't prevent (§9, the steal-GC bullet).
 
 Known limitations (beyond §9 platform blockers):
 
@@ -3137,7 +3146,8 @@ against RemNote 1.26.30):
   applyMode's insert release and eats typed text), and (3) ticks a 5s
   timer. Don't "optimize" these back to diffs.
   **Teardown side of the same code (issue #1, read from the 1.27.10 bundle
-  2026-09-28, NOT yet reproduced live):** that release is an unconditional
+  2026-09-28; REPRODUCED live the same night on 1.28.28, code unchanged in
+  the 1.28.32 JS update):** that release is an unconditional
   `setState` inside `componentDidUpdate` on a plain `Component`, and a
   stealer's key is never deleted from the singleton's state (release only
   empties its array). So once a plugin has stolen anything, any update
@@ -3151,6 +3161,23 @@ against RemNote 1.26.30):
   plugin, re-arming the loop), removes every listener, releases every key,
   clears the badge; `applyMode`/`syncEscapeSteal`/`render` are no-ops once
   `enabled` is false, so a key still in flight can't undo that.
+  **Every host path that unloads a plugin goes through `unregister()`**
+  (1.28.28): uninstall; updates, automatic or manual (`restartInDevMode` =
+  unregister + register); and the Plugins page's per-plugin record writer
+  (minified export `ot(id, changes)` in that build), which the Enabled,
+  auto-update and native toggles and the permission editor all call — it
+  unregisters on any change and re-registers if the plugin is still
+  enabled. That accounts for all three actions in issue #1 ("uninstall,
+  disable, or editing settings in plugin settings"), if "settings" there
+  means those Plugins-page options. Live evidence
+  (the user's debug log, disable on 1.28.28): exactly one `Minified React
+  error #185`, 14 ms after the toggle's `user_data` write; the snapshot
+  afterwards says `Enabled: false`, and per the user re-enabling worked
+  (badge and keys back). SDK side (0.0.46): `declareIndexPlugin` calls
+  `onActivate` from a React `useEffect` without awaiting it and
+  `onDeactivate` from that effect's cleanup, and the widget reports
+  `activateCompleted` on its own — a rejected `onActivate` is just an
+  unhandled rejection in the iframe; it never moves the host load state.
 - **The command line is shift-blind too** (typed Ex characters arrive through
   the same steal): capitals and shifted punctuation are UNTYPEABLE in
   `:commands` — `ALPHA` arrives as `alpha`, `$`→`4`, `%`→`5`, `(`→`9`,

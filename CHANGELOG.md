@@ -16,6 +16,8 @@ and were never released on their own.
   work everywhere.
 - The **Vim Tutorial** opens once after the update: a practice document in
   your knowledge base. Delete it any time; `;tutorial` brings it back.
+- Installing the update can make RemNote show one error popup — harmless,
+  see Known issues below.
 
 ### Added
 
@@ -67,8 +69,18 @@ and were never released on their own.
 - Long command-line completions overflowing the badge.
 - Disabling or uninstalling the plugin now releases everything it set up
   (key capture, event listeners, the mode badge). That is the plugin's part of
-  [#1](https://github.com/onegraund/remnote-vim/issues/1); the rest of that
-  report appears to be on RemNote's side and is still being looked into.
+  [#1](https://github.com/onegraund/remnote-vim/issues/1); the error popup
+  RemNote itself can still show is under Known issues.
+
+### Known issues
+
+- RemNote can show an error popup (`Minified React error #185`) when the
+  plugin unloads: on disable, uninstall or update, or when you change its
+  options on RemNote's Plugins page. It's a bug in RemNote's key-capture
+  code, which loops whenever a plugin that captured keys is unloaded, so the
+  plugin can't prevent it. Dismiss the popup; the plugin still switches off
+  and back on normally. Tracked in
+  [#1](https://github.com/onegraund/remnote-vim/issues/1).
 
 ## [0.1.0] — 2026-07-08
 
