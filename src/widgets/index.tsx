@@ -18,6 +18,9 @@ async function onActivate(plugin: ReactRNPlugin) {
     dimensions: { width: 690, height: 620 },
   });
 
+  // A repeat activation in the same iframe must not leave the previous
+  // adapter's listeners and steal-heal timer running next to the new one.
+  await adapter?.stop();
   adapter = new VimAdapter(plugin);
 
   await plugin.app.registerCommand({
@@ -75,6 +78,12 @@ async function onActivate(plugin: ReactRNPlugin) {
   (window as unknown as Record<string, unknown>).__vim = { plugin, adapter };
 }
 
-async function onDeactivate(_: ReactRNPlugin) {}
+// Disable / uninstall. Was a no-op, which left the steal-heal timer
+// re-stealing keys for an unloading plugin (issue #1) — see VimAdapter.stop.
+async function onDeactivate(_: ReactRNPlugin) {
+  const a = adapter;
+  adapter = undefined;
+  await a?.stop();
+}
 
 declareIndexPlugin(onActivate, onDeactivate);

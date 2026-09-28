@@ -15,6 +15,51 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-09-28 — issue #1 (disable/uninstall/settings misbehave): plugin teardown added; RemNote-side steal loop found; v0.2.2 — NOT live-verified
+
+GitHub issue #1 (external reporter, 2026-09-09): "Bug with managing
+features in settings — can be replicated by attempting uninstall, disable,
+or editing settings in plugin settings", plus a RemNote debug-log link
+(`remnote.com/view_debug_log?logId=…`) that only renders when logged in —
+**not read yet**; read it to confirm which failure the reporter hit.
+
+- **Plugin side:** `onDeactivate` was an empty function, so nothing
+  `start()` set up was ever undone — the 5s steal-heal timer kept
+  re-stealing every key for a plugin RemNote was unloading, and the four
+  event listeners, the stolen keys and the badge CSS all stayed.
+- **Host side** (read from the 1.27.10 bundle — `~/Applications/` now has
+  `RemNote-1.27.10.AppImage`; `--appimage-extract resources/app.asar` then
+  `npx @electron/asar extract`): the steal singleton's GC loops forever for
+  an unloading plugin that ever stole a key, and disable/uninstall set
+  `unloading` before calling deactivate. Full mechanics in §9's steal-GC
+  bullet. This round removes the plugin's contribution; the loop itself
+  needs a RemNote fix — **not reported upstream yet**.
+- **Change:** `VimAdapter.stop()` (sync half first: `enabled=false`, clear
+  `healTimer`, run every `unlisteners` closure; then best-effort
+  `releaseKeys` + empty `vim-mode` CSS), the `listen()` helper recording
+  each listener's removal, and `enabled` guards in `applyMode` /
+  `syncEscapeSteal` / `render`. `index.tsx`: `onDeactivate` stops the
+  adapter; `onActivate` stops any previous adapter before building a new
+  one. `stop()` deliberately does not ride the key queue (a stuck queue
+  must not block teardown).
+- **"Editing settings":** the only setting (`start-in-normal`) is read once
+  at activation. I didn't pin down whether a settings edit makes the host
+  `unregister()` the plugin — check live.
+- **Tests:** FakeWorld gained `event.removeListener`, a `css` recorder and
+  `listenerCount()`; new `tests/adapter-lifecycle.test.ts` (6 tests — the
+  two real-`onActivate`/`onDeactivate` ones fail against the old code with
+  keys still stolen). 683 unit tests via `npx vitest run --dir tests`
+  (plain `npm test` also collects the stale `.claude/worktrees/*` copies
+  and reports ~3271). check-types + build clean (the 4 webpack warnings
+  are pre-existing). Version 0.2.1 → **0.2.2** (badge `0.2.2@…`).
+- **Published:** `origin/main` had sat at cffb8a7 (2026-07-08); every local
+  commit since (integration batch, tutorial, macros, …) went out with this
+  push, merged with the README video-link edit made on GitHub (452cb71).
+- **NEXT:** live-verify in the e2e instance — enable → disable → re-enable →
+  uninstall, watching the host console for React #185 and for keys still
+  being swallowed afterward; read the debug log; report the host loop to
+  RemNote; reply on issue #1 (left open — the commit says `Refs #1`).
+
 ### 2026-07-13 — tutorial restyle (H3+blue titles, spacers, 2+ practices per lesson); macros CONFIRMED live by the user; v0.2.1
 
 User live-tested macros and reported them working. This round, on their
@@ -3033,6 +3078,21 @@ against RemNote 1.26.30):
   `reassertSteals()` (throttled, and ON the key queue — off-queue it races
   applyMode's insert release and eats typed text), and (3) ticks a 5s
   timer. Don't "optimize" these back to diffs.
+  **Teardown side of the same code (issue #1, read from the 1.27.10 bundle
+  2026-09-28, NOT yet reproduced live):** that release is an unconditional
+  `setState` inside `componentDidUpdate` on a plain `Component`, and a
+  stealer's key is never deleted from the singleton's state (release only
+  empties its array). So once a plugin has stolen anything, any update
+  while it reads `unloading`/`not-loaded`/`error` re-renders → releases →
+  re-renders: an unbounded update loop, which React 18.3.1 aborts with
+  error #185 ("Maximum update depth exceeded"). The plugin manager's
+  `unregister()` (disable/uninstall) sets `unloading` BEFORE awaiting the
+  plugin's deactivate, so the plugin cannot prevent this — it is a host
+  bug. What the plugin does control: `onDeactivate` → `VimAdapter.stop()`
+  clears the 5s timer (which otherwise kept re-stealing for an unloading
+  plugin, re-arming the loop), removes every listener, releases every key,
+  clears the badge; `applyMode`/`syncEscapeSteal`/`render` are no-ops once
+  `enabled` is false, so a key still in flight can't undo that.
 - **The command line is shift-blind too** (typed Ex characters arrive through
   the same steal): capitals and shifted punctuation are UNTYPEABLE in
   `:commands` — `ALPHA` arrives as `alpha`, `$`→`4`, `%`→`5`, `(`→`9`,

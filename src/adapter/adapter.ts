@@ -158,6 +158,10 @@ export class VimAdapter {
    */
   private escapeWanted = true;
   private enabled = false;
+  /** start()'s steal-heal interval (see reassertSteals); stop() clears it. */
+  private healTimer: ReturnType<typeof setInterval> | undefined;
+  /** One removeListener closure per listener start() registered, for stop(). */
+  private unlisteners: (() => void)[] = [];
   /** True while we are applying our own edits (so we ignore our own events). */
   private processing = false;
   /** Fallback caret when the editor reports no selection. */
@@ -266,15 +270,15 @@ export class VimAdapter {
     };
     // Register under the plugin id (the documented listenerKey) and also
     // under undefined, as a hedge against dispatch differences.
-    this.plugin.event.addListener(AppEvents.StealKeyEvent, pluginId, onSteal);
-    this.plugin.event.addListener(AppEvents.StealKeyEvent, undefined, onSteal);
+    this.listen(AppEvents.StealKeyEvent, pluginId, onSteal);
+    this.listen(AppEvents.StealKeyEvent, undefined, onSteal);
 
     // Moving focus to a different Rem invalidates the local line model. (We
     // can't listen to EditorSelectionChanged for same-rem caret moves: our own
     // edits fire it asynchronously and would clobber the model we just built.
     // The snapshot's remId check handles cross-rem focus; a same-rem click is
     // reconciled on the next re-sync.)
-    this.plugin.event.addListener(AppEvents.FocusedRemChange, undefined, () => {
+    this.listen(AppEvents.FocusedRemChange, undefined, () => {
       if (!this.processing) this.invalidateModel();
       // Config-doc tracking: reload the keymap when focus leaves it.
       void this.trackConfigFocus();
@@ -297,7 +301,7 @@ export class VimAdapter {
     //    resyncs instead of computing against a bullet the engine still
     //    thinks is empty (the reported "can't move left/right after typing
     //    capitals into an empty bullet" symptom).
-    this.plugin.event.addListener(AppEvents.EditorTextEdited, undefined, () => {
+    this.listen(AppEvents.EditorTextEdited, undefined, () => {
       switch (classifyStrayEdit(this.state.mode, this.processing)) {
         case 'ignore':
           return;
@@ -321,7 +325,43 @@ export class VimAdapter {
     this.enqueueTask(() => this.reloadConfig(false));
     // Steady-state heal for GC'd steals (see reassertSteals): even with no
     // clicks or leaked keys, a wiped registry recovers within one tick.
-    setInterval(() => void this.reassertSteals(), 5000);
+    this.healTimer = setInterval(() => void this.reassertSteals(), 5000);
+  }
+
+  /**
+   * Undo everything start() set up. Runs from the plugin's onDeactivate
+   * (RemNote deactivates on disable and uninstall) and from onActivate before
+   * a replacement adapter starts.
+   *
+   * The synchronous half comes first and is the part that matters: the SDK
+   * does not await onDeactivate, so the RPCs below may never land. Without
+   * it the heal timer kept re-stealing every key for a plugin RemNote was
+   * unloading — and RemNote's GlobalStealKeySingleton (1.27.10, read from
+   * the bundle) loops setState in componentDidUpdate for any stealer whose
+   * plugin is unloading/not-loaded, so each re-steal would re-arm that loop
+   * (issue #1; DEVELOPMENT.md §9).
+   * Deliberately NOT on the key queue: a queue stuck on an unresolved SDK
+   * promise (rx ahead of done on the badge) must not block teardown.
+   */
+  async stop() {
+    this.enabled = false;
+    if (this.healTimer !== undefined) clearInterval(this.healTimer);
+    this.healTimer = undefined;
+    for (const off of this.unlisteners.splice(0)) off();
+    const specs = [...this.stolenSpecs];
+    this.stolenSpecs.clear();
+    try {
+      if (specs.length) await this.plugin.app.releaseKeys(specs);
+      await this.plugin.app.registerCSS('vim-mode', '');
+    } catch (e) {
+      console.debug('[vim] teardown RPC failed (host already gone?)', e);
+    }
+  }
+
+  /** addListener, remembering the matching removeListener for stop(). */
+  private listen(event: string, key: string | undefined, cb: (args: unknown) => void) {
+    this.plugin.event.addListener(event, key, cb);
+    this.unlisteners.push(() => this.plugin.event.removeListener(event, key, cb));
   }
 
   async toggle() {
@@ -2736,6 +2776,9 @@ export class VimAdapter {
   // ------------------------------------------------------------ mode UI
 
   private async applyMode(mode: Mode) {
+    // Off (toggled or stopped) means nothing stolen and no badge — a key
+    // still in flight when that happened must not bring either back.
+    if (!this.enabled) return;
     const wanted = new Set(effectiveSpecs(mode, this.mapConfig));
     const toRelease = [...this.stolenSpecs].filter((s) => !wanted.has(s));
     // Steal the FULL wanted set, not the stolen-vs-wanted delta. RemNote can
@@ -2796,7 +2839,7 @@ export class VimAdapter {
    */
   private async syncEscapeSteal() {
     const wanted = isEscapeWanted(this.state);
-    if (wanted === this.escapeWanted) return;
+    if (!this.enabled || wanted === this.escapeWanted) return;
     this.escapeWanted = wanted;
     if (wanted) {
       await this.plugin.app.stealKeys(['escape']);
@@ -2811,6 +2854,7 @@ export class VimAdapter {
    * visual-line selection highlight (RemNote's own rem-selection rendering is
    * not guaranteed, so we tint the selected bullets ourselves). */
   private async render() {
+    if (!this.enabled) return; // toggle-off/stop() cleared the badge
     const mode = this.state.mode;
     const color = MODE_COLORS[mode];
     const esc = (s: string) => s.replace(/["\\]/g, '');

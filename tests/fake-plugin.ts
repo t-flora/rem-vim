@@ -10,8 +10,9 @@
  *   semantics the adapter relies on (selectText/cut/delete/insertPlainText/
  *   moveCaret) — the same model tests/harness.ts proves against the engine;
  * - a tiny rem tree (for the "Vim Keymap" config document);
- * - recorders: toasts, the CURRENT stolen-spec set (maintained from
- *   stealKeys/releaseKeys calls), a chronological call log, storage.
+ * - recorders: toasts, the latest CSS per registerCSS id, the CURRENT
+ *   stolen-spec set (maintained from stealKeys/releaseKeys calls), the live
+ *   listener count, a chronological call log, storage.
  *
  * Dispatch events like RemNote would with `stealKey(spec)` / `focusChanged()`.
  * The adapter serializes work on a private promise queue — await
@@ -112,6 +113,8 @@ export class FakeWorld {
   openFloating = new Set<string>();
   /** Plugin settings registered/set (registerBooleanSetting defaults land here). */
   settings = new Map<string, unknown>();
+  /** Latest registerCSS payload per id ('vim-mode' = the badge + mode styling). */
+  css = new Map<string, string>();
 
   // ---- rem tree
   rems = new Map<string, FakeRem>();
@@ -146,7 +149,9 @@ export class FakeWorld {
           this.log('app', 'releaseKeys', specs.join(','));
           for (const s of specs) this.stolen.delete(s);
         },
-        registerCSS: async () => {},
+        registerCSS: async (id: string, css: string) => {
+          this.css.set(id, css);
+        },
         registerCommand: async (opts: { id: string; name: string; action: () => Promise<void> }) => {
           this.commands.set(opts.id, { name: opts.name, action: opts.action });
         },
@@ -164,6 +169,13 @@ export class FakeWorld {
         addListener: (event: string, key: string | undefined, cb: (args: unknown) => void) => {
           const k = `${event}::${String(key)}`;
           this.listeners.set(k, [...(this.listeners.get(k) ?? []), cb]);
+        },
+        // SDK semantics: with a callback remove that one, without remove all.
+        removeListener: (event: string, key: string | undefined, cb?: (args: unknown) => void) => {
+          const k = `${event}::${String(key)}`;
+          const rest = cb ? (this.listeners.get(k) ?? []).filter((f) => f !== cb) : [];
+          if (rest.length) this.listeners.set(k, rest);
+          else this.listeners.delete(k);
         },
       }),
       rem: this.ns('rem', {
@@ -280,6 +292,11 @@ export class FakeWorld {
 
   log(ns: string, method: string, ...args: unknown[]) {
     this.calls.push({ ns, method, args });
+  }
+
+  /** Event listeners currently registered, across every event and key. */
+  listenerCount(): number {
+    return [...this.listeners.values()].reduce((n, cbs) => n + cbs.length, 0);
   }
 
   /** Namespace proxy: known members pass through, unknown ones throw. */
