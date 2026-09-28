@@ -15,6 +15,50 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-09-28 (night) — v0.2.3 RELEASED; issue #1's host loop reproduced live
+
+- **Released:** `release/0.2.3` merged `--no-ff` into main as 17e6b7a
+  (built with `commit-tree` + `update-ref`, so checking out main never
+  swapped the tree back to 0.2.2 under the dev server the user's RemNote
+  loads from), pushed, CI green (run 36481769024), GitHub release
+  **v0.2.3** with `PluginZip.zip` attached (sha256 `e9e27572…`, manifest
+  0.2.3; its README.md is the repo README). **The user uploads that zip to
+  the Plugin Store**; RemNote's review gates it, and until then the store
+  keeps serving 0.1.0.
+- **Live check (the user, RemNote 1.28.28):** the release checklist passed
+  (tutorial refresh: toast, "(old copy)" kept, second reload a no-op;
+  lessons 12–13; H3/blue titles; `;help`; smoke test; palette toggle;
+  disable/re-enable) except for a RemNote error popup on disable.
+- **That popup is §9's steal-GC loop, now reproduced.** `view_debug_log`
+  links 404 unless logged in, so ask the user to save the log as a file.
+  Theirs has exactly one `Minified React error #185`, at 22:12:36.035,
+  14 ms after the Enabled toggle's `user_data` write, then `Enabled: false`.
+  Everything else in it (ALERTS, `Too Many Iterations` loop warnings, an
+  updater download error) is RemNote noise. The code is identical in
+  1.28.28 and in the pending 1.28.32 JS update
+  (`~/.config/RemNote/build_overrides/1.28.32/`). New from the 1.28.28
+  bundle: every unload path calls `unregister()`: uninstall, updates, and
+  the Plugins-page record writer behind the Enabled/auto-update/native
+  toggles and permission edits (details in §9). So the 0.1.0 → 0.2.3 store
+  update itself can show the popup once.
+- **Docs:** README + CHANGELOG "Known issues" entry for the popup, plus a
+  pointer under "Upgrading". README links are now absolute because the zip
+  ships README.md as the store page, where `./CHANGELOG.md` can't resolve.
+  The package-lock root version went 0.1.0 → 0.2.3 (CI's `npm ci` is fine
+  with it).
+- **Reviewed, left as is:** `refreshTutorialIfOutdated()` runs unguarded on
+  every activation. That's fine: the SDK calls `onActivate`
+  fire-and-forget (§9), so a throw there only skips the `window.__vim` e2e
+  hook, after the adapter has already started.
+- **Machine:** the user's real RemNote auto-updated to **1.28.28** at 22:06
+  (from 1.27.10); a 1.28.32 JS bundle is downloaded and applies on its
+  next restart. The e2e instance is still 1.27.10.
+- **NEXT:** (1) the user uploads `PluginZip.zip` to the store; (2) report
+  the loop to RemNote: the fix is one line in
+  `GlobalStealKeySingleton.releaseAllKeys` (skip an entry that is already
+  empty, or delete it instead of setting `[]`); (3) reply on issue #1 (still
+  open) once the user OKs the text; (4) optional: tag `v0.1.0` at cffb8a7.
+
 ### 2026-09-28 (later) — release pass for 0.2.3: README, CHANGELOG, store description, tutorial versioning + lessons 12–13 — on `release/0.2.3`, NOT pushed
 
 The issue-#1 push (entry below) published 46 never-pushed commits with no
