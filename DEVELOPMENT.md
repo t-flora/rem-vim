@@ -15,6 +15,48 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-09-28 (later) — release pass for 0.2.3: README, CHANGELOG, store description, tutorial versioning + lessons 12–13 — on `release/0.2.3`, NOT pushed
+
+The issue-#1 push (entry below) published 46 never-pushed commits with no
+release pass — README still described 0.1.0, no changelog, stale store
+description. The user called it out; this round is that pass. **State: two
+commits on branch `release/0.2.3`, not merged, not pushed — the user reviews
+first.**
+
+- **Tutorial versioning:** `TUTORIAL_VERSION` (2) in `tutorialDoc.ts` plus a
+  synced `vim-tutorial-version` key. `ensureTutorialDoc(create)`
+  (adapter.ts) replaces an outdated copy — missing version counts as
+  outdated, i.e. every copy seeded by 0.2.1/0.2.2 — by seeding a fresh doc
+  FIRST, then renaming the old one "Vim Tutorial (old copy)" (never
+  deleted; a failed seed leaves it in place and pinned). Runs on
+  `:tutorial` and, via `refreshTutorialIfOutdated()`, on activation for
+  users with the seen flag (toast, no auto-open). A pinned FNV-1a
+  fingerprint of `TUTORIAL_LINES` fails the suite if lessons change without
+  a bump.
+- **Lessons 12–13:** `dth` on "unhappy", `dib` on `call(this, that)`, `ci'`
+  on a quoted greeting (no apostrophe may precede the target quotes — `i'`
+  pairs from the line start); Ctrl-A / `5` Ctrl-X from the line start (the
+  target number must be the first digit run on the line), `gj` on a
+  sentence split across two bullets. `:help` gained the missing `t<c>` row.
+- **Docs:** README rewritten for 0.2 (store-first install, "New in 0.2" +
+  upgrade heads-up for Space and `gd`/`gu`, Getting started, extended
+  Shift-blind table, Search/Macros rows, Ex table, palette + setting,
+  limitations; fixed the wrong `:e` description — it searches the whole
+  KB). New CHANGELOG.md: its "Fixed" list only has bugs 0.1.0 users
+  actually had (the search-mode crash, the `gs` placement bug and the
+  insert-typing race were introduced and fixed between releases).
+  CONTRIBUTING gained a "Releasing" checklist; the bug template asks for the
+  `vim <version>@…` readout; manifest description updated.
+- **Tests:** 695 (12 new), mutation-checked four ways (lesson edit without
+  bump, version check disabled, rename-before-seed order, activation refresh
+  removed — each caught). Version 0.2.2 → **0.2.3** (readout `vim 0.2.3@…`).
+- **NEXT, only after the user's OK:** merge `--no-ff` to main, push, wait for
+  CI, `npm run build`, `gh release create v0.2.3 PluginZip.zip` with the
+  CHANGELOG 0.2.3 section as notes; the user uploads the zip to the store.
+  Live check worth doing first: the user's own RemNote has a pre-versioning
+  tutorial copy → reload should toast and leave "Vim Tutorial (old copy)"
+  next to a fresh 14-lesson "Vim Tutorial".
+
 ### 2026-09-28 — issue #1 (disable/uninstall/settings misbehave): plugin teardown added; RemNote-side steal loop found; v0.2.2 — NOT live-verified
 
 GitHub issue #1 (external reporter, 2026-09-09): "Bug with managing
@@ -2425,15 +2467,15 @@ Engine/adapter contract changes in this batch (for anyone rebasing):
 
 ## 0.5 Feature status (what works live)
 
-Formerly VIM_STATUS.md; trimmed to what a contributor needs. Engine suite:
-**664/664** unit tests green (run `npx vitest run --dir tests` — don't trust
+Formerly VIM_STATUS.md; trimmed to what a contributor needs. Unit suite:
+**695/695** tests green as of 0.2.3 (run `npx vitest run --dir tests` — don't trust
 this number, verify; a bare `npm test` also collects the stale
 `.claude/worktrees/*` suite copies and inflates it).
 
 Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
 
 - **Modes** — `i` insert / `Esc` normal / `v` charwise visual / `vv`
-  visual-line (`v`+`j/k` auto-upgrades) / `;` `/` `:` command line / `space`
+  visual-line (`v`+`j/k` auto-upgrades) / `;` command line / `space`
   incremental search; mode badge bottom-right; per-mode key stealing (insert
   releases everything but Esc).
 - **Motions** — `h l 0 w b e f<c> t<c>` `,`(reverse find repeat), counts
@@ -2544,7 +2586,7 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   outside insert mode.
 - **Undo/redo** — `u`/`Ctrl-R` delegate to RemNote's history.
 - **Getting-started tutorial** — a seeded **"Vim Tutorial" practice
-  document** (vimtutor model: 12 lessons as real bullets, every command
+  document** (vimtutor model: 14 lessons as real bullets, every command
   practiced in place with the real bindings; ≥2 practice bullets per lesson;
   titles seeded as H3 headings with blue bullets, one blank spacer bullet
   between lessons — restyled 2026-07-13, H3/Blue rendering not yet checked in
@@ -2552,7 +2594,13 @@ Working live in the real app (RemNote 1.26.30, SDK 0.0.46):
   `src/adapter/tutorialDoc.ts`, lifecycle mirrors the `:config` doc — id
   pinned in synced storage, deleting the doc re-seeds fresh). Auto-opens
   once on first activation (`vim-tutorial-seen` flag), reopens via
-  `:tutorial`/`:vimtutor`/**"Vim: Tutorial"**. Live-verified 2026-07-11
+  `:tutorial`/`:vimtutor`/**"Vim: Tutorial"**. **Versioned since 0.2.3:**
+  the copy records the `TUTORIAL_VERSION` it was seeded from
+  (`vim-tutorial-version`); an outdated copy is replaced on `:tutorial` or
+  on activation (toast, no auto-open) and kept renamed "Vim Tutorial (old
+  copy)" — NOT yet live-verified, see the 2026-09-28 release entry in §0.
+  Lessons 12 (`dt<c>`, `dib`, `ci'`) and 13 (Ctrl-A/Ctrl-X, `gj`) added in
+  0.2.3, Harness-verified only. Live-verified 2026-07-11
   (`e2e/tutorial.mjs` 8/8 incl. fixing the caaat exercise with real keys +
   a separate relaunch check of the auto-open branch); unit coverage in
   `tests/tutorial.test.ts` (every practice line's claim runs against the

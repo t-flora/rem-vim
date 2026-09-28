@@ -7,11 +7,11 @@
   "version": {
     "major": 0,
     "minor": 2,
-    "patch": 2
+    "patch": 3
   },
   "theme": [],
   "enableOnMobile": false,
-  "description": "Modal vim-style editing for RemNote: normal/insert/visual modes, motions, operators, counts, registers.",
+  "description": "Modal vim-style editing for RemNote: normal/insert/visual modes, motions, operators, text objects, counts, registers, marks, macros, search, an Ex command line, custom keybindings and an interactive tutorial.",
   "requestNative": false,
   "requiredScopes": [
     {

@@ -6,12 +6,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 Normal / insert / visual modes, motions, operators, counts, registers, text
-objects, marks, dot-repeat, an Ex command line, and native clipboard
-integration — driven entirely by the keyboard, right inside your RemNote notes.
+objects, marks, dot-repeat, macros, whole-document search, an Ex command line,
+custom keybindings, native clipboard integration, and an interactive tutorial —
+driven entirely by the keyboard, right inside your RemNote notes.
 
 
 https://github.com/user-attachments/assets/abfb4142-6f6b-4aa1-a06f-423b80e964cf
 
+
+> **New in 0.2:** macros (`q`/`gq`), whole-document search (`Space`), custom
+> keybindings (`:config`), the interactive **Vim Tutorial**, `gs` surround,
+> `gf`, `:10`-style line jumps and more — see the [CHANGELOG](./CHANGELOG.md).
+>
+> **Upgrading from 0.1?** `Space` now starts a search (it used to move right —
+> use `l`), and `gd`/`gu` are gone (use `Ctrl-D`/`Ctrl-U`).
 
 > **Desktop only.** RemNote's plugin sandbox can't steal keys reliably on
 > mobile, so the plugin declares `enableOnMobile: false`.
@@ -20,11 +28,12 @@ https://github.com/user-attachments/assets/abfb4142-6f6b-4aa1-a06f-423b80e964cf
 
 ## Install
 
-### From the RemNote Plugin Store *(once published)*
+### From the RemNote Plugin Store
 
 In RemNote: **Settings → Plugins → Explore**, search for **"Vim Mode"**, and
-install. Then toggle it on from the command palette
-(**"Vim: Toggle vim mode"**).
+install. It's active right away — a `-- NORMAL --` badge appears bottom-right —
+and the **Vim Tutorial** opens once so you can learn the keys by using them
+(see [Getting started](#getting-started-the-vim-tutorial)).
 
 ### From source (development build)
 
@@ -41,9 +50,10 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
 
 ## Using it
 
-- Toggle the whole thing on/off: command palette → **"Vim: Toggle vim mode"**.
+- Toggle the whole thing off/on: command palette → **"Vim: Toggle vim mode"**.
 - The mode badge (bottom-right) shows the current mode: `-- NORMAL --`,
-  `-- INSERT --`, `-- VISUAL --`, etc.
+  `-- INSERT --`, `-- VISUAL --`, etc. — plus `recording @a` while a macro
+  records.
 - The **caret and the focused row are tinted in the mode color** (violet =
   normal, amber = visual, sky = command; light and dark theme each get their
   own palette). Insert mode keeps the editor's plain thin caret — no color
@@ -55,18 +65,35 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
   automatically.
 - Built-in cheat sheet for everything below: type **`;help`** (this plugin's
   `:help`) or run **"Vim: Help / cheat sheet"** from the command palette.
+  `j`/`k` scroll it, `Esc` closes it.
+
+### Getting started: the Vim Tutorial
+
+The tutorial is an ordinary RemNote document called **"Vim Tutorial"**: 14
+short lessons written as bullets, each with practice lines you edit with the
+real keys, vimtutor-style. It opens by itself the first time the plugin
+activates; reopen it any time with **`;tutorial`** (or `;vimtutor`, or
+**"Vim: Tutorial"** in the command palette).
+
+It's yours to wreck — delete it and the next `;tutorial` seeds a fresh copy.
+When a plugin update brings new lessons, your copy is replaced with the new
+one and the old one is kept as **"Vim Tutorial (old copy)"**, in case you
+wrote notes in it.
 
 ### The one thing to know first: Shift-blind keys
 
 RemNote's plugin sandbox **cannot see the Shift key** when it intercepts
 keystrokes. So capitals and shifted symbols are reached through lowercase
-**`g`-chord synonyms** instead of Shift:
+**synonyms** instead of Shift:
 
 | You want (vim) | Type here | | You want (vim) | Type here |
 |---|---|---|---|---|
 | `$` (end of line) | `gl` | | `G` (last line) | `ge` |
 | `^` (first non-blank) | `gh` | | `A` (append at end) | `ga` |
 | `O` (open above)* | `go` | | `~` (toggle case) | `` ` `` (backtick) |
+| `F<c>` (find backward) | `gf<c>` | | `V` (visual-line) | `vv` |
+| `N` (search backward) | `z` | | `@a` / `@@` (play macro) | `gqa` / `gq.` |
+| `:` (command line) | `;` | | `>` / `<` (visual-line indent) | `.` / `,` |
 
 <sub>*In RemNote a bullet is one line, so `o`/`go` both create a **sibling**
 bullet.</sub>
@@ -75,14 +102,16 @@ bullet.</sub>
 
 | Category | Keys |
 |---|---|
-| **Modes** | `i` insert · `Esc` normal · `v` charwise visual · `vv` visual-line (or `v` then `j`/`k`) · `;` command line |
-| **Motions** | `h l 0 w b e` · `f<c>` `t<c>` · `,` (repeat find, reversed) · counts (`3w`) · `gh`=`^` `gl`=`$` `gg` `ge`=`G` |
+| **Modes** | `i` insert · `Esc` normal · `v` charwise visual · `vv` visual-line (or `v` then `j`/`k`) · `;` command line · `Space` search |
+| **Motions** | `h l 0 w b e` · `f<c>` `t<c>` `gf<c>` · `,` (repeat find, reversed) · counts (`3w`, `2fx`) · `gh`=`^` `gl`=`$` `gg` `ge`=`G` |
 | **Operators** | `d c y` + any motion/text-object · `x X s S D C` · `r<c>` replace char · `` ` ``=`~` toggle case · `dgl`=`d$` `dgh`=`d^` |
 | **Text objects** | `iw aw` · pairs `ib ab` (=`i(`/`a(`), `i[ a[` · quotes `i' a'`, `` i` a` `` — under `d`/`c`/`y` and in visual (`vi[`) |
+| **Search** | `Space` + a pattern + `Enter` jumps to the next match anywhere in the document (a regex, case-sensitive) · `n` next · `z` previous (vim: `N`) · wraps around the ends · `Ctrl-O` jumps back |
+| **Macros** | `q<a-z>` record · `q` stop · `gq<a-z>` play (vim: `@`) · `gq.` replay the last one (vim: `@@`) · counts (`3gqa`) · `qaq` empties a register |
 | **Marks** | `m<c>` set · `'<c>` jump back (adds a jumplist entry) · `''` back to pre-jump spot · `:marks` list |
 | **Lines / bullets** | `gj`=`J` join next sibling (adopts its children; `3gj`) · `o`/`go` new sibling · `C-a`/`C-x` increment/decrement a number |
 | **Repeat** | `.` repeat last normal-mode change (`dw`, `3x`, `r<c>`, `p`, `gj`, `C-a`, …) |
-| **Visual** | charwise `v` + `h l w b e f gl gh` then `d x c s y p o` · visual-line extends across bullets with `j k gg ge`; `d`/`x` cut, `y` yank, `p` paste, `.`/`,` indent/outdent |
+| **Visual** | charwise `v` + `h l w b e f gf gl gh` then `d x c s y p o`, `` ` `` toggle case, `gs<delim>` wrap in delimiters (`gs9` `(…)` · `gsq` `"…"` · `gs[` `[…]` · `gs'` · ``gs` `` · `gs8` `*…*`) · visual-line extends across bullets with `j k gg ge`; `d`/`x` cut, `y` yank, `p` paste, `.`/`,` indent/outdent · `;` opens the command line with the selected bullets as its range (`:s`, `:sort`, `:d`, …) |
 | **Clipboard** | deletes/yanks route through the **native OS clipboard** (whole bullets serialize as RemNote's own `- bullet` text, subtrees included) |
 | **Navigation** | `C-o`/`C-i` jumplist back/forward · `C-h`/`C-l` focus previous/next pane · `C-d`/`C-u` scroll half-page |
 | **Undo** | `u` undo · `C-r` redo (delegates to RemNote's history) |
@@ -94,15 +123,17 @@ Open with **`;`** (RemNote keeps `/` for its own slash menu). Tab cycles a
 
 | Command | Does |
 |---|---|
-| `:help` | Open the cheat-sheet widget |
-| `:e <name>` | Search the document and open the matching bullet (a jump) |
+| `:help` | Open the cheat-sheet window (`j`/`k` scroll, `Esc` closes) |
+| `:tutorial` / `:vimtutor` | Open the Vim Tutorial practice document |
+| `:10` (any number) | Jump to that bullet, counted from the top of the document (a jump — `Ctrl-O` returns) |
+| `:e <name>` | Search your knowledge base and open the best match (a jump) |
 | `:s/pat/repl/[gia]` | Substitute — visual selection or focused bullet as range; `g` all, `i` ignore-case, `a` whole doc |
 | `:sort [n] [rev]` | Sort selection siblings (or the focused bullet's children); `n` numeric, `rev` reversed |
 | `:t` / `:co[py]` | Duplicate the selected bullets below |
 | `:d` / `:y` | Delete / yank bullets to the register + OS clipboard (like `dd`/`yy`) |
 | `:g/pat/d` | Delete every bullet in the doc whose text matches (subtree included) |
 | `:marks` | List current marks in a toast |
-| `:vsplit` `:split` `:q` `:only` | Pane management (focus follows vim semantics) |
+| `:vsplit` `:split` `:q` `:only` | Pane management — `:vs <name>` / `:sp <name>` open a search match in the new pane; focus follows vim semantics |
 | `:w` | Acknowledged no-op (RemNote autosaves) |
 | `:config` | Open your keybinding config document (see below) |
 | `:map` / `:mapload` | List active mappings + issues / re-apply the config |
@@ -159,6 +190,18 @@ Fine print:
 - `<c-w>` never reaches the desktop app (Electron eats it); `<c-e>`/`<c-y>`
   are RemNote's audio-embed hotkeys — you'll get a warning if you bind them.
 
+### Command palette and settings
+
+| Palette command | Does |
+|---|---|
+| **Vim: Toggle vim mode** | Turn the plugin's key handling off / back on |
+| **Vim: Help / cheat sheet** | Same as `;help` |
+| **Vim: Edit keybindings (:config)** | Same as `;config` — reachable even if a mapping broke `;` |
+| **Vim: Tutorial (interactive practice document)** | Same as `;tutorial` |
+
+One setting, on the plugin's settings page: **Start in normal mode** (on by
+default). Turn it off to start in insert mode instead.
+
 ---
 
 ## Known limitations
@@ -169,6 +212,13 @@ sandbox (the gory details live in [DEVELOPMENT.md](./DEVELOPMENT.md) §9):
 - **Capitals/symbols need synonyms** — the Shift-blind remaps above; `i{`/`i"`
   exist in the engine but can't be typed live. (`:config` mappings can put
   any of these on keys you like — `nmap - $`.)
+- **Macros and `.` can't replay typed text.** Insert-mode typing goes straight
+  to RemNote, never through the plugin, so a macro records the commands
+  around it but not the text, and changes that enter insert mode (`cw`, `o`)
+  aren't dot-repeatable. Build macros from normal-mode commands.
+- **Pasting charwise text drops rem references, images and LaTeX** (they
+  can't be rebuilt from plain text). Whole-bullet `dd`/`yy`/`p` keep
+  everything.
 - **Caret column can desync** after clicking mid-line (the collapsed caret is
   unreadable from the sandbox). Re-anchor with `0`/`gl`, or enter+leave insert.
 - **`Ctrl-E`/`Ctrl-Y`** are unbound — there is no view-scroll API to hook.
@@ -190,22 +240,25 @@ and deletes write to (exactly as you'd expect from a vim yank).
 
 ```
 src/engine/     pure vim state machine (no RemNote) — the tested core
-src/adapter/    engine ⇄ RemNote plugin API (key stealing, editor ops, model)
-src/widgets/    plugin entry point (onActivate) + the :help widget
-tests/          Vitest unit suite for the engine
+src/adapter/    engine ⇄ RemNote plugin API (key stealing, editor ops, model),
+                plus the keymap parser and the tutorial's lesson content
+src/widgets/    plugin entry point (onActivate / onDeactivate) + the :help widget
+tests/          Vitest: engine suites against a fake editor, adapter suites
+                against a fake RemNote plugin
 e2e/            live end-to-end harness driving the real app over CDP
 public/         manifest.json
 ```
 
 See [**DEVELOPMENT.md**](./DEVELOPMENT.md) for the architecture deep-dive, the
 platform constraints, how to add commands, and the work log; see
-[**CONTRIBUTING.md**](./CONTRIBUTING.md) for the workflow.
+[**CONTRIBUTING.md**](./CONTRIBUTING.md) for the workflow and the release
+checklist, and [**CHANGELOG.md**](./CHANGELOG.md) for what changed when.
 
 ### Test
 
 ```bash
 npm run check-types  # tsc
-npm test             # engine unit tests (Vitest) — fast, deterministic, no RemNote
+npm test             # unit tests (Vitest) — fast, deterministic, no RemNote
 npm run e2e          # live end-to-end against a running RemNote (local only)
 ```
 
@@ -220,6 +273,9 @@ itself. See DEVELOPMENT.md §7.
 ```bash
 npm run build        # → PluginZip.zip (upload this to the Plugin Store)
 ```
+
+Each [GitHub release](https://github.com/onegraund/remnote-vim/releases) has
+the zip that was uploaded to the store attached.
 
 ## License
 
