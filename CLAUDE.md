@@ -9,6 +9,10 @@ modes, motions, operators, counts, registers, text objects, marks, dot-repeat, a
 Ex command line, native clipboard integration) inside the RemNote note editor.
 Desktop only — RemNote's plugin sandbox can't reliably steal keys on mobile.
 
+This repo (rem-vim) is a fork of [Vim Mode](https://github.com/OneGraund/remnote-vim)
+by onegraund; its plugin id is `tflora-lqrmy2v`. Keep the credit to the
+original in README, LICENSE and package.json.
+
 ## Commands
 
 ```bash
@@ -26,7 +30,7 @@ Run a single unit test file/case with Vitest directly, e.g.
 
 To actually see a change working: `npm run dev`, then in RemNote **Settings →
 Plugins → Build → Develop from localhost** → `http://localhost:8080/` → **Develop**,
-and toggle "Vim Mode" on. There is **no hot reload**; reload the plugin (or the
+and toggle "rem-vim" on. There is **no hot reload**; reload the plugin (or the
 RemNote window) after every code change to pick up new JS. Adding a **new
 widget file** needs more: restart `npm run dev` entirely — webpack computes
 the `src/widgets/**/*.tsx` entry list once at startup, so a widget file that

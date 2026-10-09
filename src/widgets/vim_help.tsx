@@ -164,7 +164,7 @@ function VimHelp() {
 
       <header>
         <div className="titleRow">
-          <h2>Vim Mode — Help</h2>
+          <h2>rem-vim — Help</h2>
           <span className="scrollHint">
             <Key k="j" />/<Key k="k" /> or <Key k="↓" />/<Key k="↑" /> scrolls this window
           </span>

@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
-  "id": "remnote-vim",
-  "name": "Vim Mode",
-  "author": "onegraund",
-  "repoUrl": "https://github.com/onegraund/remnote-vim",
+  "id": "tflora-lqrmy2v",
+  "name": "rem-vim",
+  "author": "tflora",
+  "repoUrl": "https://github.com/t-flora/rem-vim",
   "version": {
     "major": 0,
     "minor": 3,
@@ -11,7 +11,7 @@
   },
   "theme": [],
   "enableOnMobile": false,
-  "description": "Modal vim-style editing for RemNote: motions, operators, text objects, counts, registers, marks, macros, search, an Ex command line, custom keybindings and an interactive tutorial.",
+  "description": "Vim mode for RemNote with real Shift keys (A, G, $, {, }, :): motions, operators, text objects, macros, search and an Ex command line. Fork of Vim Mode by onegraund.",
   "requestNative": false,
   "requiredScopes": [
     {

@@ -1,7 +1,8 @@
-# Contributing to remnote-vim
+# Contributing to rem-vim
 
 Thanks for wanting to help. This plugin brings modal, vim-style editing to the
-RemNote desktop app. The short version of how to work on it is below;
+RemNote desktop app; it's a fork of
+[Vim Mode](https://github.com/OneGraund/remnote-vim) by onegraund. The short version of how to work on it is below;
 [**DEVELOPMENT.md**](./DEVELOPMENT.md) is the full deep-dive (architecture, the
 platform constraints that shape every design decision, and concrete recipes for
 adding commands or debugging live).
@@ -9,14 +10,14 @@ adding commands or debugging live).
 ## Getting set up
 
 ```bash
-git clone https://github.com/onegraund/remnote-vim
-cd remnote-vim
+git clone https://github.com/t-flora/rem-vim
+cd rem-vim
 npm install
 npm run dev          # webpack-dev-server on http://localhost:8080
 ```
 
 Then in RemNote: **Settings → Plugins → Build → Develop from localhost**, enter
-`http://localhost:8080/`, click **Develop**, and turn on the "Vim Mode" toggle.
+`http://localhost:8080/`, click **Develop**, and turn on the "rem-vim" toggle.
 A `-- NORMAL --` badge appears bottom-right when it's active.
 
 ## The one rule that keeps this codebase sane

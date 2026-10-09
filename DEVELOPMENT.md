@@ -1,5 +1,11 @@
 # Developer Guide
 
+> **rem-vim note:** this guide and its work log (§0) come from the original
+> [Vim Mode](https://github.com/OneGraund/remnote-vim) project by onegraund,
+> kept for its architecture notes and hard-won platform findings. The
+> 2026-10-08 entry at the top of §0 is this fork's; §9's shift-blindness
+> finding is corrected there.
+
 This is the deep-dive companion to [README.md](./README.md) (quick start).
 Read this when you're about to write code: it explains *how the pieces fit
 together* and gives concrete recipes for extending or debugging the plugin.

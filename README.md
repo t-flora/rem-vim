@@ -1,26 +1,41 @@
-# remnote-vim
+# rem-vim
 
-**Modal, vim-style editing for the [RemNote](https://www.remnote.com) desktop app**, as a RemNote plugin.
+**Vim mode for the [RemNote](https://www.remnote.com) desktop app — with real Shift keys.**
 
-[![CI](https://github.com/onegraund/remnote-vim/actions/workflows/ci.yml/badge.svg)](https://github.com/onegraund/remnote-vim/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/onegraund/remnote-vim/blob/main/LICENSE)
+[![CI](https://github.com/t-flora/rem-vim/actions/workflows/ci.yml/badge.svg)](https://github.com/t-flora/rem-vim/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Normal / insert / visual modes, motions, operators, counts, registers, text
-objects, marks, dot-repeat, macros, whole-document search, an Ex command line,
-custom keybindings, native clipboard integration, and an interactive tutorial —
-driven entirely by the keyboard, right inside your RemNote notes.
+rem-vim is a fork of **[Vim Mode](https://github.com/OneGraund/remnote-vim)**
+by [onegraund](https://github.com/OneGraund), the RemNote plugin that brings
+modal, vim-style editing to your notes: normal / insert / visual modes,
+motions, operators, counts, registers, text objects, marks, dot-repeat,
+macros, whole-document search, an Ex command line, custom keybindings, native
+clipboard integration and an interactive tutorial. All of that is their work,
+and its history is preserved here — this fork only builds on it. If you want
+the original, install **"Vim Mode"** from the RemNote plugin store.
 
+### What this fork adds
 
-https://github.com/user-attachments/assets/abfb4142-6f6b-4aa1-a06f-423b80e964cf
+- **Real shifted keys.** `A`, `I`, `O`, `G`, `V`, `$`, `^`, `{`, `}`, `:`, `~`,
+  `>`… all do what they do in vim. The original routes capitals through
+  lowercase stand-ins (`ga` for `A`, `gl` for `$`) because RemNote's key
+  capture looked shift-blind. It isn't: RemNote matches stolen keys with
+  [is-hotkey](https://github.com/ianstormtaylor/is-hotkey) by key code, so a
+  plugin just has to ask for `shift+a`, `shift+4`, `shift+[`… (and never `$`
+  itself, which is-hotkey reads as the Home key). Verified in RemNote 1.28.32
+  at a real keyboard.
+- **`{` / `}`** jump between empty bullets, plus **`J`**, **`N`**, **`@a`** /
+  **`@@`**, `di(` / `di{` / `di"`, `:sort!`.
+- **vim's own meanings** where the stand-ins clashed: `:` opens the command
+  line and `;` repeats `f`/`t`; `V` is line-wise visual; `ge` is end of the
+  previous word; `` ` `` jumps to marks; `gj`/`gk` move.
+- **Flashcard review is left alone**: vim steps aside while the queue is open,
+  so RemNote's review shortcuts keep working.
+- **`zt` / `zz` / `zb`** (experimental): plugins can't scroll the page, so it
+  walks the cursor off-screen and back to make RemNote scroll. It works; the
+  page visibly moves for a moment.
 
-
-> **New in 0.2:** macros (`q`/`gq`), whole-document search (`Space`), custom
-> keybindings (`:config`), the interactive **Vim Tutorial**, `gs` surround,
-> `gf`, `:10`-style line jumps and more — see the
-> [CHANGELOG](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md).
->
-> **Upgrading from 0.1?** `Space` now starts a search (it used to move right —
-> use `l`), and `gd`/`gu` are gone (use `Ctrl-D`/`Ctrl-U`).
+See the [CHANGELOG](CHANGELOG.md) (0.3.x entries) for the details.
 
 > **Desktop only.** RemNote's plugin sandbox can't steal keys reliably on
 > mobile, so the plugin declares `enableOnMobile: false`.
@@ -29,31 +44,22 @@ https://github.com/user-attachments/assets/abfb4142-6f6b-4aa1-a06f-423b80e964cf
 
 ## Install
 
-### From the RemNote Plugin Store
-
-In RemNote: **Settings → Plugins → Explore**, search for **"Vim Mode"**, and
-install. It's active right away — a `-- NORMAL --` badge appears bottom-right —
-and the **Vim Tutorial** opens once so you can learn the keys by using them
-(see [Getting started](#getting-started-the-vim-tutorial)).
-
-> RemNote reviews every store update before it goes live, so for a while
-> after a release the store can still hand out the previous version. This
-> README describes the latest release (see the
-> [CHANGELOG](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md)).
-> To check which one you have, look at the small readout in the bottom-left
-> corner: from 0.2.3 on it starts with `vim 0.2.3@…`; 0.1.0's has no version
-> number in it (here is the [0.1.0 README](https://github.com/onegraund/remnote-vim/blob/452cb71/README.md)).
-
-### From source (development build)
+rem-vim isn't in the RemNote plugin store; run it from source. Don't run it
+alongside the store's Vim Mode — both capture the same keys — so disable or
+uninstall that first.
 
 ```bash
+git clone https://github.com/t-flora/rem-vim
+cd rem-vim
 npm install
 npm run dev          # webpack-dev-server on http://localhost:8080
 ```
 
 In RemNote: **Settings → Plugins → Build → Develop from localhost**, enter
-`http://localhost:8080/`, click **Develop**, and turn on the **"Vim Mode"**
-toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
+`http://localhost:8080/`, click **Develop**, and turn on the **"rem-vim"**
+toggle. A `-- NORMAL --` badge appears bottom-right when it's active, and the
+bottom-left readout starts with `vim <version>@`. Keep `npm run dev` running
+while you use it; reload RemNote (Cmd/Ctrl-R) after pulling new code.
 
 ---
 
@@ -97,7 +103,7 @@ Capitals and shifted symbols are the real vim keys: `A`, `G`, `V`, `$`, `{`,
 `:` and so on. RemNote matches them by **physical key on a US layout**, so on
 other layouts a few symbols may sit elsewhere (remap them with `:config`).
 
-Keys whose meaning changed in 0.3.0, for anyone coming from 0.2: `:` opens the
+Keys that mean something different from the original Vim Mode: `:` opens the
 command line and `;` repeats `f`/`t` · `V` is line-wise visual and `v` inside
 visual exits · `ge` is "end of previous word" · `` ` `` jumps to a mark · `gj`
 / `gk` move down/up · `J` joins · `N` searches backward · `@` plays macros.
@@ -216,8 +222,7 @@ default). Turn it off to start in insert mode instead.
 
 Most of these come from what a plugin is *allowed* to do inside RemNote's
 sandbox (the gory details live in
-[DEVELOPMENT.md](https://github.com/onegraund/remnote-vim/blob/main/DEVELOPMENT.md)
-§9):
+[DEVELOPMENT.md](DEVELOPMENT.md) §9):
 
 - **Shifted keys assume a US layout** — RemNote matches them by physical
   key. Remap with `:config` if a symbol lands elsewhere on your keyboard.
@@ -244,7 +249,7 @@ sandbox (the gory details live in
   in RemNote's key-capture code, which loops whenever a plugin that captured
   keys is unloaded, so the plugin can't prevent it. Dismiss the popup: the
   plugin still switches off and back on normally. Tracked in
-  [#1](https://github.com/onegraund/remnote-vim/issues/1).
+  [Vim Mode #1](https://github.com/onegraund/remnote-vim/issues/1).
 
 ## Privacy
 
@@ -269,13 +274,11 @@ public/         manifest.json
 ```
 
 See
-[**DEVELOPMENT.md**](https://github.com/onegraund/remnote-vim/blob/main/DEVELOPMENT.md)
-for the architecture deep-dive, the platform constraints, how to add
-commands, and the work log; see
-[**CONTRIBUTING.md**](https://github.com/onegraund/remnote-vim/blob/main/CONTRIBUTING.md)
-for the workflow and the release checklist, and
-[**CHANGELOG.md**](https://github.com/onegraund/remnote-vim/blob/main/CHANGELOG.md)
-for what changed when.
+[**DEVELOPMENT.md**](DEVELOPMENT.md) for the architecture deep-dive, the
+platform constraints, how to add commands, and the work log (mostly
+inherited from the original project; its §9 shift-blindness finding is
+corrected at the top); see [**CONTRIBUTING.md**](CONTRIBUTING.md) for the
+workflow, and [**CHANGELOG.md**](CHANGELOG.md) for what changed when.
 
 ### Test
 
@@ -289,17 +292,17 @@ The live harness needs RemNote running with a debug port, today's Daily
 Document open, and a **test account** in `e2e/.env`
 (`cp e2e/.env.example e2e/.env`). It types real keystrokes into one scratch
 bullet, checks the result via RemNote's read-only data API, and cleans up after
-itself. See DEVELOPMENT.md §7.
+itself. See DEVELOPMENT.md §7. These suites come from the original project
+and haven't been updated for this fork's key changes (they still type `;` for
+the command line, for example), so expect failures until they are.
 
 ### Build a distributable zip
 
 ```bash
-npm run build        # → PluginZip.zip (upload this to the Plugin Store)
+npm run build        # → PluginZip.zip
 ```
-
-Each [GitHub release](https://github.com/onegraund/remnote-vim/releases) has
-the zip that was uploaded to the store attached.
 
 ## License
 
-[MIT](https://github.com/onegraund/remnote-vim/blob/main/LICENSE) © onegraund
+[MIT](LICENSE). The original Vim Mode is © 2026 onegraund; this fork's
+changes are © 2026 Tiago Flora.

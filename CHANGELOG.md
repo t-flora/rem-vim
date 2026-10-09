@@ -1,6 +1,9 @@
 # Changelog
 
-All notable changes to the **Vim Mode** RemNote plugin. The format follows
+All notable changes to **rem-vim**, a fork of the
+[Vim Mode](https://github.com/OneGraund/remnote-vim) RemNote plugin by
+onegraund. Entries up to 0.2.3 are the original project's; 0.3.0 on are this
+fork's. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version numbers are
 the plugin manifest's.
 
