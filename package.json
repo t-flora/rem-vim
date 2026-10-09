@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "remnote-vim",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Modal, vim-style editing for the RemNote desktop app, as a RemNote plugin.",
   "author": "onegraund",
   "license": "MIT",

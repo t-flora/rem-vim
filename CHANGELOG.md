@@ -4,6 +4,15 @@ All notable changes to the **Vim Mode** RemNote plugin. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version numbers are
 the plugin manifest's.
 
+## [0.3.1] — 2026-10-08
+
+### Changed
+
+- **Vim steps aside during flashcard review.** While the queue is open the
+  plugin releases every key and hides its badge, so RemNote's own review
+  shortcuts work; leaving the queue switches vim back on in normal mode. If
+  you had toggled vim off, it stays off.
+
 ## [0.3.0] — 2026-10-08
 
 ### Shifted keys work

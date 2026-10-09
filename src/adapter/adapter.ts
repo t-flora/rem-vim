@@ -164,6 +164,16 @@ export class VimAdapter {
    */
   private escapeWanted = true;
   private enabled = false;
+  /**
+   * The flashcard queue is open: vim steps aside (nothing stolen, no badge)
+   * so RemNote's own review keys work. Separate from `enabled`, which is the
+   * user's on/off toggle — leaving the queue restores whatever that says.
+   */
+  private inQueue = false;
+  /** Enabled and not paused for flashcard review: keys are ours. */
+  private get active(): boolean {
+    return this.enabled && !this.inQueue;
+  }
   /** start()'s steal-heal interval (see reassertSteals); stop() clears it. */
   private healTimer: ReturnType<typeof setInterval> | undefined;
   /** One removeListener closure per listener start() registered, for stop(). */
@@ -328,9 +338,53 @@ export class VimAdapter {
     // Load the user keymap. Serialized on the key queue and not awaited:
     // keys pressed before it lands use the base bindings.
     this.enqueueTask(() => this.reloadConfig(false));
+    // Flashcard review owns its keys (rating, show answer, …). The events
+    // switch vim off and on; the same poll that heals steals also catches a
+    // missed enter/exit, and the initial check covers a queue already open.
+    this.listen(AppEvents.QueueEnter, undefined, () => this.setQueueOpen(true));
+    this.listen(AppEvents.QueueLoadCard, undefined, () => this.setQueueOpen(true));
+    this.listen(AppEvents.QueueExit, undefined, () => this.setQueueOpen(false));
+    await this.pollQueue();
     // Steady-state heal for GC'd steals (see reassertSteals): even with no
     // clicks or leaked keys, a wiped registry recovers within one tick.
-    this.healTimer = setInterval(() => void this.reassertSteals(), 5000);
+    this.healTimer = setInterval(() => {
+      void this.pollQueue();
+      this.reassertSteals();
+    }, 5000);
+  }
+
+  /** Ask RemNote whether the queue is open (undefined remaining = closed). */
+  private async pollQueue() {
+    try {
+      const remaining = await this.plugin.queue.getNumRemainingCards();
+      this.setQueueOpen(remaining !== undefined);
+    } catch (e) {
+      console.debug('[vim] queue poll failed', e);
+    }
+  }
+
+  /**
+   * Pause for / resume after flashcard review. The flag flips immediately so
+   * keys already in flight see it; the steal/release work runs on the key
+   * queue so it can't interleave with an applyMode.
+   */
+  private setQueueOpen(open: boolean) {
+    if (open === this.inQueue) return;
+    this.inQueue = open;
+    this.enqueueTask(async () => {
+      if (this.inQueue !== open || !this.enabled) return;
+      if (open) {
+        const specs = [...this.stolenSpecs];
+        this.stolenSpecs.clear();
+        if (specs.length) await this.plugin.app.releaseKeys(specs);
+        await this.plugin.app.registerCSS('vim-mode', '');
+      } else {
+        this.state = { ...initialState(), mode: 'normal' };
+        this.structuralOp = null;
+        this.invalidateModel();
+        await this.applyMode('normal');
+      }
+    });
   }
 
   /**
@@ -409,7 +463,7 @@ export class VimAdapter {
   }
 
   private async handleSym(sym: string) {
-    if (!this.enabled) {
+    if (!this.active) {
       this.dbgDone++;
       return;
     }
@@ -2106,7 +2160,7 @@ export class VimAdapter {
     this.mapDiagnostics = diagnostics;
     this.specToSym = specToSymTable(config);
     // While vim is toggled off nothing may be stolen — toggle-on re-applies.
-    if (this.enabled) await this.applyMode(this.state.mode);
+    if (this.active) await this.applyMode(this.state.mode);
     const nMaps = listMappingLines(config).length;
     const errs = diagnostics.filter((d) => d.severity === 'error').length;
     const warns = diagnostics.length - errs;
@@ -2851,9 +2905,9 @@ export class VimAdapter {
   // ------------------------------------------------------------ mode UI
 
   private async applyMode(mode: Mode) {
-    // Off (toggled or stopped) means nothing stolen and no badge — a key
-    // still in flight when that happened must not bring either back.
-    if (!this.enabled) return;
+    // Off (toggled, stopped, or paused for flashcard review) means nothing
+    // stolen and no badge — a key still in flight must not bring either back.
+    if (!this.active) return;
     const wanted = new Set(effectiveSpecs(mode, this.mapConfig));
     const toRelease = [...this.stolenSpecs].filter((s) => !wanted.has(s));
     // Steal the FULL wanted set, not the stolen-vs-wanted delta. RemNote can
@@ -2897,10 +2951,10 @@ export class VimAdapter {
    */
   private reassertSteals() {
     const now = Date.now();
-    if (!this.enabled || now - this.lastStealAssert < 1500) return;
+    if (!this.active || now - this.lastStealAssert < 1500) return;
     this.lastStealAssert = now;
     this.enqueueTask(async () => {
-      if (!this.enabled || this.stolenSpecs.size === 0) return;
+      if (!this.active || this.stolenSpecs.size === 0) return;
       await this.plugin.app.stealKeys([...this.stolenSpecs]);
     });
   }
@@ -2914,7 +2968,7 @@ export class VimAdapter {
    */
   private async syncEscapeSteal() {
     const wanted = isEscapeWanted(this.state);
-    if (!this.enabled || wanted === this.escapeWanted) return;
+    if (!this.active || wanted === this.escapeWanted) return;
     this.escapeWanted = wanted;
     if (wanted) {
       await this.plugin.app.stealKeys(['escape']);
@@ -2929,7 +2983,7 @@ export class VimAdapter {
    * visual-line selection highlight (RemNote's own rem-selection rendering is
    * not guaranteed, so we tint the selected bullets ourselves). */
   private async render() {
-    if (!this.enabled) return; // toggle-off/stop() cleared the badge
+    if (!this.active) return; // toggle-off/stop()/review cleared the badge
     const mode = this.state.mode;
     const color = MODE_COLORS[mode];
     const esc = (s: string) => s.replace(/["\\]/g, '');

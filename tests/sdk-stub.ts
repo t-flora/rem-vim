@@ -13,6 +13,9 @@ export const AppEvents = {
   StealKeyEvent: 'StealKeyEvent',
   FocusedRemChange: 'FocusedRemChange',
   EditorTextEdited: 'EditorTextEdited',
+  QueueEnter: 'QueueEnter',
+  QueueExit: 'QueueExit',
+  QueueLoadCard: 'QueueLoadCard',
 } as const;
 
 export const MoveUnit = {

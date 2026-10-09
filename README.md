@@ -60,6 +60,9 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
 ## Using it
 
 - Toggle the whole thing off/on: command palette → **"Vim: Toggle vim mode"**.
+- **Flashcard review is left alone:** while the queue is open, vim releases
+  every key so RemNote's review shortcuts work, and comes back in normal
+  mode when you leave.
 - The mode badge (bottom-right) shows the current mode: `-- NORMAL --`,
   `-- INSERT --`, `-- VISUAL --`, etc. — plus `recording @a` while a macro
   records.

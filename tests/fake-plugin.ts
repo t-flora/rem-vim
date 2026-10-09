@@ -133,6 +133,9 @@ export class FakeWorld {
   sel: { start: number; end: number } | null = null;
   clipboard: string | null = null;
 
+  // ---- flashcard queue (getNumRemainingCards is undefined while closed)
+  queueRemaining: number | undefined = undefined;
+
   private listeners = new Map<string, ((args: unknown) => void)[]>();
   private nextId = 1;
 
@@ -189,6 +192,9 @@ export class FakeWorld {
           const flat = name.join('');
           return [...this.rems.values()].find((r) => r.text.join('') === flat);
         },
+      }),
+      queue: this.ns('queue', {
+        getNumRemainingCards: async () => this.queueRemaining,
       }),
       focus: this.ns('focus', {
         getFocusedRem: async () => (this.focusedRemId ? this.rems.get(this.focusedRemId) : undefined),
@@ -395,6 +401,16 @@ export class FakeWorld {
   /** Focus moved (the adapter re-checks focus itself — no payload needed). */
   focusChanged() {
     this.emit(AppEvents.FocusedRemChange, {});
+  }
+
+  /** The flashcard queue opens (with `remaining` cards) or closes. */
+  queueEntered(remaining = 3) {
+    this.queueRemaining = remaining;
+    this.emit(AppEvents.QueueEnter, {});
+  }
+  queueExited() {
+    this.queueRemaining = undefined;
+    this.emit(AppEvents.QueueExit, {});
   }
 
   /** A text edit the plugin did not make (native typing / leaked keys). */
