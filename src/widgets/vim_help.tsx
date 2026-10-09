@@ -233,6 +233,7 @@ function VimHelp() {
           <Section title="Scroll & jumps">
             <Row keys={['Ctrl-d']} desc="half page down" />
             <Row keys={['Ctrl-u']} desc="half page up" />
+            <Row keys={['z', 't']} desc="scroll this line to the top  (zz middle, zb bottom)" />
             <Row keys={['Ctrl-o']} desc="back to before the last gg/G/{/}/:e/search jump" />
             <Row keys={['Ctrl-i']} desc="forward again" />
             <Row keys={['Ctrl-h', 'Ctrl-l']} desc="focus previous / next pane" />

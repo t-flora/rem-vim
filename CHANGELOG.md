@@ -4,6 +4,19 @@ All notable changes to the **Vim Mode** RemNote plugin. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version numbers are
 the plugin manifest's.
 
+## [0.3.4] — 2026-10-08
+
+0.3.2 and 0.3.3 were development builds.
+
+### Added
+
+- **`zt` / `zz` / `zb`** (and `z<CR>` / `z.`) put the cursor line at the top,
+  middle or bottom of the screen. Plugins can't scroll RemNote's page, so the
+  plugin walks the cursor off-screen and back and lets RemNote scroll it into
+  view; the page visibly moves for a moment (the cursor is hidden while it
+  travels). The first use in a pane is slower while it measures where the
+  screen edges are.
+
 ## [0.3.1] — 2026-10-08
 
 ### Changed

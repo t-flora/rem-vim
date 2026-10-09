@@ -44,6 +44,8 @@ export class Harness {
   lastSearch: string | null = null;
   /** Whether the last search/searchStep wrapped around the document boundary. */
   searchWrapped = false;
+  /** zt/zz/zb requests (`align` Actions), in order. */
+  aligns: string[] = [];
   /** Messages from `toast` Actions (the adapter shows plugin.app.toast). */
   toasts: string[] = [];
   state: VimState;
@@ -373,6 +375,10 @@ export class Harness {
         if (this.vTrail) this.row = this.vTrail[this.vTrail.length - 1];
         this.vTrail = null;
         this.syncVSel();
+        break;
+      case 'align':
+        // view-only: the fake editor has no viewport; just record the request
+        this.aligns.push(a.where);
         break;
       case 'paragraph': {
         // Same rule as the adapter's walkParagraph (rows instead of rems).

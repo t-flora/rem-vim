@@ -466,6 +466,248 @@ export async function walkParagraph(
   }
 }
 
+// ------------------------------------------------------------ zt / zz / zb
+
+/** The caret line's vertical extent in viewport px. */
+export interface LineRect {
+  top: number;
+  bottom: number;
+}
+
+/** What `alignCaretRow` can do: move the caret a line and look at it. */
+export interface ScrollIO {
+  step(dir: -1 | 1): Promise<void>;
+  /** The caret line's rect, or undefined if unknown. */
+  caretRect(): Promise<LineRect | undefined>;
+  /** The focused bullet's id. */
+  rowId(): Promise<string | undefined>;
+}
+
+/** What `alignCaretRow` has learned about the view, kept between calls. */
+export interface ViewGeometry {
+  /** Where RemNote parks a line it scrolls into view: top edge / bottom edge. */
+  topPin?: number;
+  bottomPin?: number;
+}
+
+export const newViewGeometry = (): ViewGeometry => ({});
+
+export type AlignResult = 'ok' | 'partial' | 'unavailable';
+
+/** px of slack when comparing edges. */
+const EPS = 2;
+
+/**
+ * The edge that leads when walking `dir`: the bottom going down, the top
+ * going up. When the view scrolls, RemNote parks that edge just inside the
+ * screen.
+ */
+const lead = (r: LineRect, dir: -1 | 1) => (dir > 0 ? r.bottom : r.top);
+const height = (r: LineRect) => r.bottom - r.top;
+
+/**
+ * How far the view scrolled during one step from `r` to `r2`. Without a
+ * scroll the leading edge advances by the new line's height; whatever it
+ * fell short by, the view scrolled. (Gaps between bullets make this an
+ * underestimate, which only means walking a little further.)
+ */
+const scrolledBy = (r: LineRect, r2: LineRect, dir: -1 | 1) =>
+  Math.max(0, height(r2) - (lead(r2, dir) - lead(r, dir)) * dir);
+
+interface WalkOut {
+  /** Steps taken (some may have moved nothing, at a document boundary). */
+  steps: number;
+  /** Steps taken before the caret left its starting bullet (wrapped lines). */
+  prefix: number;
+  /** A long run of steps moved nothing: the document start/end. */
+  boundary: boolean;
+  /** The leading edge of a line the view scrolled to (exactly at the edge). */
+  pinned?: number;
+  /** px the view scrolled, over this many steps. */
+  scrolled: number;
+  scrollSteps: number;
+}
+
+/**
+ * A step that changes neither the bullet nor the caret's screen position is
+ * either the document boundary or a scroll inside a wrapped bullet — they
+ * look the same. This many in a row means the boundary.
+ */
+const BOUNDARY_RUN = 12;
+
+/** Step `dir` until the view has scrolled `need` px or the document ends. */
+async function walkScrolling(io: ScrollIO, dir: -1 | 1, need: number, maxSteps: number): Promise<WalkOut> {
+  let r = await io.caretRect();
+  const startId = await io.rowId();
+  let id = startId;
+  let steps = 0;
+  let prefix: number | undefined;
+  let scrolled = 0;
+  let scrollSteps = 0;
+  let run = 0;
+  let pinned: number | undefined;
+  while (steps < maxSteps && scrolled < need) {
+    await io.step(dir);
+    steps++;
+    const r2 = await io.caretRect();
+    if (!r || !r2) break;
+    // The bullet id only matters for a step that looked like a no-op, and
+    // for counting the starting bullet's own wrapped lines.
+    const flat = Math.abs(lead(r2, dir) - lead(r, dir)) <= EPS;
+    const id2 = flat || prefix === undefined ? await io.rowId() : undefined;
+    if (flat && id2 === id) {
+      // boundary or a scroll inside a wrapped bullet: credit it once something moves
+      if (++run >= BOUNDARY_RUN) {
+        return { steps, prefix: prefix ?? steps - run, boundary: true, pinned, scrolled, scrollSteps };
+      }
+      continue;
+    }
+    if (run) {
+      scrolled += run * height(r);
+      scrollSteps += run;
+      pinned = lead(r, dir);
+      run = 0;
+    }
+    if (prefix === undefined && id2 !== startId) prefix = steps - 1;
+    if (id2 !== undefined) id = id2;
+    const sc = scrolledBy(r, r2, dir);
+    if (sc > EPS) {
+      scrolled += sc;
+      scrollSteps++;
+      pinned = lead(r2, dir);
+    }
+    r = r2;
+  }
+  // stopped mid-run (step limit): those steps may have moved nothing
+  return { steps, prefix: prefix ?? steps - run, boundary: run > 0, pinned, scrolled, scrollSteps };
+}
+
+/**
+ * Walk back to where `out` started. Without a boundary every step moved, so
+ * retrace them blind; otherwise go by the starting bullet's id, then `prefix`
+ * more steps for its wrapped lines. `aligned` = the last step scrolled the
+ * view, i.e. the line is parked at the edge.
+ */
+async function walkBack(
+  io: ScrollIO,
+  dir: -1 | 1,
+  startId: string | undefined,
+  out: WalkOut
+): Promise<{ aligned: boolean; rect: LineRect | undefined }> {
+  let r: LineRect | undefined;
+  let aligned = false;
+  const stepOnce = async () => {
+    r ??= await io.caretRect();
+    await io.step(dir);
+    const r2 = await io.caretRect();
+    aligned = !!r && !!r2 && scrolledBy(r, r2, dir) > EPS;
+    r = r2;
+  };
+  if (!out.boundary) {
+    for (let i = 0; i < out.steps - 1; i++) await io.step(dir);
+    if (out.steps > 0) await stepOnce();
+  } else {
+    for (let i = 0; i < out.steps + 2 && (await io.rowId()) !== startId; i++) await stepOnce();
+    for (let i = 0; i < out.prefix; i++) await stepOnce();
+  }
+  return { aligned, rect: r ?? (await io.caretRect()) };
+}
+
+/**
+ * vim's zt / zz / zb without a scroll API. RemNote scrolls the caret into
+ * view minimally (just inside the edge it crossed), so:
+ * - top: walk down until the caret's line has scrolled off the top, then
+ *   walk back — arriving from below parks it exactly at the top edge;
+ * - bottom: the mirror image;
+ * - center: walk off and back by the measured distance to the middle,
+ *   re-measuring after each round trip.
+ * The caret always ends on the line it started on. `geo` caches where the
+ * edges are between calls.
+ */
+export async function alignCaretRow(
+  io: ScrollIO,
+  where: 'top' | 'center' | 'bottom',
+  geo: ViewGeometry,
+  opts: { screenHeight?: number; maxSteps?: number } = {}
+): Promise<AlignResult> {
+  const maxSteps = opts.maxSteps ?? 300;
+  const screen = opts.screenHeight ?? 2000;
+  if (where === 'center') return alignCenter(io, geo, opts);
+  const r0 = await io.caretRect();
+  if (!r0) return 'unavailable';
+  let r: LineRect = r0;
+  const away: -1 | 1 = where === 'top' ? 1 : -1;
+  for (let round = 0; round < 3; round++) {
+    // scroll needed for the line to pass the edge it should end at
+    const need: number =
+      where === 'top'
+        ? r.bottom - (geo.topPin ?? 0) + EPS
+        : (geo.bottomPin ?? screen) - r.top + EPS;
+    const startId = await io.rowId();
+    const out: WalkOut = await walkScrolling(io, away, need, maxSteps);
+    if (out.pinned !== undefined) {
+      if (where === 'top') geo.bottomPin = out.pinned;
+      else geo.topPin = out.pinned;
+    }
+    const back: { aligned: boolean; rect: LineRect | undefined } = await walkBack(io, (-away) as -1 | 1, startId, out);
+    if (back.aligned && back.rect) {
+      if (where === 'top') geo.topPin = back.rect.top;
+      else geo.bottomPin = back.rect.bottom;
+      return 'ok';
+    }
+    if (out.boundary || out.steps === 0 || !back.rect) return 'partial';
+    // under-scrolled — maybe the remembered edge is stale (window resized):
+    // forget it and try again from where the line is now
+    if (where === 'top') geo.topPin = undefined;
+    else geo.bottomPin = undefined;
+    r = back.rect;
+  }
+  return 'partial';
+}
+
+async function alignCenter(
+  io: ScrollIO,
+  geo: ViewGeometry,
+  opts: { screenHeight?: number; maxSteps?: number }
+): Promise<AlignResult> {
+  const maxSteps = opts.maxSteps ?? 300;
+  // Both edges are needed; a zt (or zb) round trip learns them.
+  for (let i = 0; i < 2 && (geo.topPin === undefined || geo.bottomPin === undefined); i++) {
+    const res = await alignCaretRow(io, geo.topPin === undefined ? 'top' : 'bottom', geo, opts);
+    if (res === 'unavailable') return res;
+  }
+  if (geo.topPin === undefined || geo.bottomPin === undefined) return 'partial';
+  const target = (geo.topPin + geo.bottomPin) / 2;
+  // actual scroll / measured scroll (bullet gaps make the measure low)
+  let ratio = 1;
+  // the view scrolls a line per step, so "centered" means within half of that
+  let quantum = 0;
+  let prevAbs = Infinity;
+  for (let round = 0; ; round++) {
+    const r = await io.caretRect();
+    if (!r) return 'unavailable';
+    const d = (r.top + r.bottom) / 2 - target;
+    if (Math.abs(d) <= Math.max(height(r), quantum) / 2 + EPS) return 'ok';
+    // no closer than last round: as centered as whole-line scrolling allows
+    if (Math.abs(d) >= prevAbs - EPS) return 'ok';
+    if (round === 5) return 'partial';
+    prevAbs = Math.abs(d);
+    // below the middle: scroll the content up (walk down and back)
+    const away: -1 | 1 = d > 0 ? 1 : -1;
+    const startId = await io.rowId();
+    const out = await walkScrolling(io, away, (Math.abs(d) - height(r) / 2) / ratio, maxSteps);
+    if (out.pinned !== undefined) {
+      if (away > 0) geo.bottomPin = out.pinned;
+      else geo.topPin = out.pinned;
+    }
+    const back = await walkBack(io, (-away) as -1 | 1, startId, out);
+    if (out.scrolled <= EPS || !back.rect) return 'partial'; // nothing scrolled: document edge
+    const moved = Math.abs((back.rect.top + back.rect.bottom) / 2 - target - d);
+    if (moved > EPS) ratio = Math.min(4, Math.max(0.5, moved / out.scrolled));
+    if (out.scrollSteps > 0) quantum = moved / out.scrollSteps;
+  }
+}
+
 // ------------------------------------------------------------ search
 
 /** One document unit to search: a Rem id and its flattened line text. */

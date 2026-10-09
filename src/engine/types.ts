@@ -89,6 +89,13 @@ export type Action =
    * to the document start/end if there is none. A jump, like vim's.
    */
   | { t: 'paragraph'; dir: -1 | 1; count: number }
+  /**
+   * `zt` / `zz` / `zb`: scroll the view so the cursor line sits at the top,
+   * center or bottom, cursor unchanged. RemNote has no scroll API, so the
+   * adapter walks the caret off-screen and back (its caret-into-view scroll
+   * is minimal) — see `alignCaretRow` in pure.ts.
+   */
+  | { t: 'align'; where: 'top' | 'center' | 'bottom' }
   /** Move the caret vertically by `count` Rems, page-style (Ctrl-D/U/E/Y). */
   | { t: 'scroll'; dir: -1 | 1; count: number }
   /** Run an Ex command line (without the leading ':'), e.g. "wq", "e foo". */
@@ -163,7 +170,9 @@ export type Pending =
   /** `q` pressed (no recording active); waiting for the register name a–z. */
   | { p: 'record' }
   /** `@`/`gq` pressed; waiting for the register to replay (`@`/`.` = last replayed). */
-  | { p: 'play' };
+  | { p: 'play' }
+  /** `z` pressed; waiting for t/z/b (and z<CR> z. z-) to reposition the view. */
+  | { p: 'z' };
 
 export interface VimState {
   mode: Mode;

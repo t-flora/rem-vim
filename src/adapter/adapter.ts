@@ -45,6 +45,10 @@ import {
   settleRead,
   truncateLabel,
   walkParagraph,
+  alignCaretRow,
+  LineRect,
+  newViewGeometry,
+  ViewGeometry,
   walkToBoundary,
   walkToRoot,
   walkToTarget,
@@ -148,6 +152,8 @@ export class VimAdapter {
    * this one) — see the `MUTATING_OTHER` check in `applyKey`.
    */
   private structuralOp: { revert: () => Promise<void>; reapply: () => Promise<void> } | null = null;
+  /** zt/zz/zb: where each pane's view parks scrolled-in lines (see alignCaretRow). */
+  private viewGeo = new Map<string, ViewGeometry>();
   private structuralApplied = true;
   /** Debug trace: which path the last u/C-r actually took, so live testing
    * can confirm the direct-revert path is the one firing. */
@@ -417,6 +423,16 @@ export class VimAdapter {
     }
   }
 
+  /** The caret's on-screen line rect (zt/zz/zb), from RemNote's getCaretPosition. */
+  private async caretRect(): Promise<LineRect | undefined> {
+    const r = (await this.plugin.editor.getCaretPosition()) as
+      | { top?: number; y?: number; bottom?: number; height?: number }
+      | undefined;
+    const top = r?.top ?? r?.y;
+    if (top === undefined) return undefined;
+    return { top, bottom: r?.bottom ?? top + (r?.height ?? 0) };
+  }
+
   /** addListener, remembering the matching removeListener for stop(). */
   private listen(event: string, key: string | undefined, cb: (args: unknown) => void) {
     this.plugin.event.addListener(event, key, cb);
@@ -673,6 +689,7 @@ export class VimAdapter {
       case 'pasteRem':
       case 'goDoc':
       case 'paragraph':
+      case 'align': // walks the caret off the line and back
       case 'indent':
       case 'outdent':
       case 'scroll':
@@ -1245,6 +1262,36 @@ export class VimAdapter {
           },
           a.count
         );
+        break;
+      }
+
+      case 'align': {
+        const pane = (await this.plugin.window.getFocusedPaneId()) ?? '';
+        let geo = this.viewGeo.get(pane);
+        if (!geo) this.viewGeo.set(pane, (geo = newViewGeometry()));
+        // The caret has to travel off-screen and back to make RemNote scroll;
+        // hide it and the row tint meanwhile so only the page is seen moving.
+        await this.plugin.app.registerCSS(
+          'vim-align',
+          `html body [contenteditable="true"] { caret-color: transparent !important; }
+           html body [data-rem-id]:focus-within { background: none !important; box-shadow: none !important; }`
+        );
+        let res;
+        try {
+          res = await alignCaretRow(
+            {
+              step: (dir) => editor.moveCaretVertical(dir),
+              caretRect: () => this.caretRect(),
+              rowId: async () => (await focus.getFocusedRem())?._id,
+            },
+            a.where,
+            geo,
+            { screenHeight: globalThis.screen?.availHeight }
+          );
+        } finally {
+          await this.plugin.app.registerCSS('vim-align', '');
+        }
+        if (res === 'unavailable') await this.plugin.app.toast('zt/zz/zb: RemNote did not report the cursor position');
         break;
       }
 

@@ -133,6 +133,9 @@ export class FakeWorld {
   sel: { start: number; end: number } | null = null;
   clipboard: string | null = null;
 
+  /** What editor.getCaretPosition reports (undefined = RemNote gave nothing). */
+  caretPosition: { top: number; bottom: number } | undefined = undefined;
+
   // ---- flashcard queue (getNumRemainingCards is undefined while closed)
   queueRemaining: number | undefined = undefined;
 
@@ -239,6 +242,7 @@ export class FakeWorld {
         getSynced: async (k: string) => this.storage.get(k),
       }),
       editor: this.ns('editor', {
+        getCaretPosition: async () => this.caretPosition,
         getFocusedEditorText: async () => (this.focusedRemId == null ? null : [this.text]),
         getSelection: async () =>
           this.sel

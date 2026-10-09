@@ -539,3 +539,44 @@ describe('adapter: :sort! (the bang is typeable now)', () => {
     expect(await sortWith(['shift+1'])).toEqual(['c', 'b', 'a']);
   });
 });
+
+describe('engine: zt / zz / zb', () => {
+  it('zt zz zb emit align and leave the text and cursor alone', () => {
+    for (const [keys, where] of [['zt', 'top'], ['zz', 'center'], ['zb', 'bottom']] as const) {
+      const e = h('  hello world', 0, 8);
+      e.keys(keys);
+      expect(e.aligns, keys).toEqual([where]);
+      expect(e.line).toBe('  hello world');
+      expect(e.caret).toBe(8);
+      expect(e.mode).toBe('normal');
+    }
+  });
+
+  it('z<CR> and z. also move the cursor to the first non-blank', () => {
+    const e = h('  hello', 0, 5);
+    e.keys('z<cr>');
+    expect(e.aligns).toEqual(['top']);
+    expect(e.caret).toBe(2);
+    const e2 = h('  hello', 0, 5);
+    e2.keys('z.');
+    expect(e2.aligns).toEqual(['center']);
+    expect(e2.caret).toBe(2);
+  });
+
+  it('z followed by anything else cancels', () => {
+    const e = h('abc');
+    e.keys('zq');
+    expect(e.aligns).toEqual([]);
+    expect(e.state.recording).toBeNull(); // q was eaten by the cancelled z, not a macro start
+    e.keys('x');
+    expect(e.line).toBe('bc');
+  });
+});
+
+describe('adapter: zt without a caret position', () => {
+  it('toasts instead of walking the cursor around', async () => {
+    const { world, adapter } = await boot('abc');
+    await type(world, adapter, ['z', 't']);
+    expect(world.toasts.at(-1)).toContain('did not report the cursor position');
+  });
+});

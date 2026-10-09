@@ -443,6 +443,20 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
     return reset(state);
   }
 
+  if (state.pending.p === 'z') {
+    // zt/zz/zb keep the cursor; z<CR>/z./z- also move it to the first non-blank.
+    const where = ({ t: 'top', Enter: 'top', z: 'center', '.': 'center', b: 'bottom', '-': 'bottom' } as const)[
+      key as 't' | 'Enter' | 'z' | '.' | 'b' | '-'
+    ];
+    if (!where) return reset(state);
+    // The caret move comes first: align walks off the line and back, after
+    // which the adapter's caret model is stale.
+    const acts: Action[] =
+      key === 'Enter' || key === '.' || key === '-' ? [{ t: 'setCaret', at: firstNonBlank(text) }] : [];
+    acts.push({ t: 'align', where });
+    return reset(state, acts);
+  }
+
   if (state.pending.p === 'pane') {
     const st: VimState = { ...state, pending: { p: 'none' } };
     if (key === 'h') return { state: st, actions: [{ t: 'focusPane', dir: -1 }] };
@@ -548,6 +562,8 @@ function handleNormal(state: VimState, key: string, snap: Snapshot): EngineResul
       return { state: { ...state, pending: { p: 'find', key } }, actions: [] };
     case 'g':
       return { state: { ...state, pending: { p: 'g' } }, actions: [] };
+    case 'z':
+      return { state: { ...state, pending: { p: 'z' } }, actions: [] };
     case 'r':
       return { state: { ...state, pending: { p: 'replace' } }, actions: [] };
 

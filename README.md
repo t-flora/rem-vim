@@ -121,7 +121,7 @@ bullet and `{`/`}` stop at empty bullets.</sub>
 | **Repeat** | `.` repeat last normal-mode change (`dw`, `3x`, `r<c>`, `p`, `J`, `C-a`, …) |
 | **Visual** | charwise `v` + any motion, then `d x c s y p o`, `~` toggle case, `>`/`<` indent, `gs<delim>` wrap in delimiters (`gs(` · `gs"` · `gs[` · `gs{` · `gs<` · `gs'` · ``gs` `` · `gs*` · `gs_`) · visual-line `V` extends across bullets with `j k gg G`; `d`/`x` cut, `y` yank, `p` paste, `>`/`<` indent/outdent · `:` opens the command line with the selected bullets as its range (`:s`, `:sort`, `:d`, …) |
 | **Clipboard** | deletes/yanks route through the **native OS clipboard** (whole bullets serialize as RemNote's own `- bullet` text, subtrees included) |
-| **Navigation** | `C-o`/`C-i` jumplist back/forward · `C-h`/`C-l` focus previous/next pane · `C-d`/`C-u` scroll half-page |
+| **Navigation** | `C-o`/`C-i` jumplist back/forward · `C-h`/`C-l` focus previous/next pane · `C-d`/`C-u` scroll half-page · `zt` `zz` `zb` (and `z<CR>` `z.`) put the cursor line at the top / middle / bottom of the screen |
 | **Undo** | `u` undo · `C-r` redo (delegates to RemNote's history) |
 
 ### Ex command line (`:`)
@@ -231,6 +231,9 @@ sandbox (the gory details live in
 - **Caret column can desync** after clicking mid-line (the collapsed caret is
   unreadable from the sandbox). Re-anchor with `0`/`$`, or enter+leave insert.
 - **`Ctrl-E`/`Ctrl-Y`** are unbound — there is no view-scroll API to hook.
+- **`zt`/`zz`/`zb` scroll by walking the cursor** off-screen and back
+  (RemNote scrolls it into view), since plugins can't scroll the page. You'll
+  see the page move for a moment; the cursor ends where it started.
 - **`j`/`k` move between bullets**, because a RemNote bullet is one line by
   construction.
 - The charwise-visual selection is a real text selection, so RemNote's floating
