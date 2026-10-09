@@ -52,7 +52,7 @@ DEVELOPMENT.md §7 for how to drive it.
 ## Before you open a PR
 
 - `npm run check-types` and `npm test` are green.
-- If the change is user-visible, update the `;help` sheet
+- If the change is user-visible, update the `:help` sheet
   (`src/widgets/vim_help.tsx`), the README, and the feature status in
   DEVELOPMENT.md §0.5, and add a line under an "Unreleased" heading in
   CHANGELOG.md.
@@ -73,7 +73,7 @@ public documentation, so a release is more than a push:
 2. Bump the version in **both** `package.json` and `public/manifest.json`.
 3. `CHANGELOG.md`: turn "Unreleased" into the new version, dated. Call out
    anything that changes existing keys under "Upgrading" / "Changed".
-4. README (features, cheat sheet, Ex table, limitations), the `;help` sheet,
+4. README (features, cheat sheet, Ex table, limitations), the `:help` sheet,
    DEVELOPMENT.md §0.5, and the manifest `description` (the store listing)
    match what ships. The store rejects a `description` over 200 characters
    (`tests/manifest.test.ts` checks it and the other schema limits).
@@ -89,10 +89,9 @@ public documentation, so a release is more than a push:
 
 ## Reporting bugs
 
-Use the issue templates. Because RemNote's plugin sandbox can't see the Shift
-key, many capitals and symbols are intentionally remapped (`$`→`gl`, `G`→`ge`,
-`A`→`ga`, …). Check `;help` and the README's "Known limitations" before filing —
-it might be working as designed.
+Use the issue templates. Check `:help` and the README's "Known limitations"
+before filing — it might be working as designed (for example, shifted keys
+assume a US keyboard layout).
 
 ## License
 

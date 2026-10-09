@@ -88,8 +88,8 @@ describe('3. queue serialization and gate timing', () => {
 });
 
 describe('4. mid-rhs mode change', () => {
-  it('map <space> ; + "w" + enter runs the Ex command from inside one expansion', async () => {
-    const { world, adapter } = await boot({ config: ['map <space> ;'] });
+  it('map <space> : + "w" + enter runs the Ex command from inside one expansion', async () => {
+    const { world, adapter } = await boot({ config: ['map <space> :'] });
     await type(world, adapter, ['space', 'w', 'enter']);
     expect(world.toasts).toContain('Saved (RemNote autosaves)');
     expect(asAny(adapter).state.mode).toBe('normal');
@@ -100,7 +100,7 @@ describe('5. :mapload (direct call from queue context — deadlock regression)',
   it('reloads edited config and reports via toast; hangs the suite if ever re-enqueued', async () => {
     const { world, adapter, configDoc } = await boot({ config: ['nmap <c-j> l'] });
     world.setConfigLines(configDoc!, ['nmap <c-j> l', 'nmap - gl']);
-    await type(world, adapter, [';', 'm', 'a', 'p', 'l', 'o', 'a', 'd', 'enter']);
+    await type(world, adapter, ['shift+;', 'm', 'a', 'p', 'l', 'o', 'a', 'd', 'enter']);
     expect(world.toasts.some((t) => /2 mappings/.test(t))).toBe(true);
     expect(world.stolen.has('-')).toBe(true);
     expect(world.stolen.has('ctrl+j')).toBe(true);
@@ -109,7 +109,7 @@ describe('5. :mapload (direct call from queue context — deadlock regression)',
 
 describe('6. diagnostics', () => {
   it('a silent (boot) reload with errors toasts them; valid lines still apply', async () => {
-    const { world, adapter } = await boot({ config: ['nmap $ j', 'nmap - gl'] });
+    const { world, adapter } = await boot({ config: ['nmap <f1> j', 'nmap - gl'] });
     expect(world.toasts.some((t) => /1 error/.test(t))).toBe(true);
     await type(world, adapter, ['-']);
     expect(world.caret).toBe(predict('alpha bravo charlie', 'gl').caret);
@@ -127,7 +127,7 @@ describe('7. per-mode steal diffs across mode switches', () => {
     expect(world.stolen.has(',')).toBe(true); // unmap was normal-scoped
     expect(world.stolen.has('-')).toBe(true); // union rule
 
-    await type(world, adapter, ['v']); // vv → visual-line
+    await type(world, adapter, ['shift+v']); // V → visual-line
     expect(asAny(adapter).state.mode).toBe('visual-line');
     expect(world.stolen.has(',')).toBe(true);
 
@@ -250,7 +250,7 @@ describe('9. focus-leave auto-reload', () => {
 describe('10. :config lifecycle', () => {
   it('creates, seeds, pins and opens the doc on first use (a jump)', async () => {
     const { world, adapter, scratch } = await boot();
-    await type(world, adapter, [';', 'c', 'o', 'n', 'f', 'i', 'g', 'enter']);
+    await type(world, adapter, ['shift+;', 'c', 'o', 'n', 'f', 'i', 'g', 'enter']);
     const doc = [...world.rems.values()].find((r) => r.text.join('') === 'Vim Keymap');
     expect(doc).toBeDefined();
     expect(doc!.isDocument).toBe(true);
@@ -277,7 +277,7 @@ describe('10. :config lifecycle', () => {
     expect(world.stolen.has('ctrl+j')).toBe(true); // adopted at boot
     expect(world.storage.get('vim-keymap-doc-id')).toBe(doc._id); // re-pinned
     const docsNamed = [...world.rems.values()].filter((r) => r.text.join('') === 'Vim Keymap');
-    await type(world, adapter, [';', 'c', 'o', 'n', 'f', 'i', 'g', 'enter']);
+    await type(world, adapter, ['shift+;', 'c', 'o', 'n', 'f', 'i', 'g', 'enter']);
     expect(
       [...world.rems.values()].filter((r) => r.text.join('') === 'Vim Keymap')
     ).toHaveLength(docsNamed.length); // opened, not recreated
@@ -287,22 +287,22 @@ describe('10. :config lifecycle', () => {
 describe('11. regressions in the refactored handleSym + :map output', () => {
   it('escape still closes the :help floating widget', async () => {
     const { world, adapter } = await boot();
-    await type(world, adapter, [';', 'h', 'e', 'l', 'p', 'enter']);
+    await type(world, adapter, ['shift+;', 'h', 'e', 'l', 'p', 'enter']);
     expect(world.calls.some((c) => c.method === 'openFloatingWidget')).toBe(true);
     await type(world, adapter, ['escape']);
     expect(world.calls.some((c) => c.method === 'closeFloatingWidget')).toBe(true);
   });
   it('tab still cycles the wildmenu in command mode', async () => {
     const { world, adapter } = await boot();
-    await type(world, adapter, [';', 'm']);
+    await type(world, adapter, ['shift+;', 'm']);
     await tick(); // suggestions are computed off-queue
     await type(world, adapter, ['tab']);
     expect(asAny(adapter).state.commandLine).toBe('marks'); // first m-catalog entry
     await type(world, adapter, ['escape']);
   });
   it(':map lists mappings and surfaces diagnostics', async () => {
-    const { world, adapter } = await boot({ config: ['nmap - gl', 'nmap $ j'] });
-    await type(world, adapter, [';', 'm', 'a', 'p', 'enter']);
+    const { world, adapter } = await boot({ config: ['nmap - gl', 'nmap <f1> j'] });
+    await type(world, adapter, ['shift+;', 'm', 'a', 'p', 'enter']);
     expect(world.toasts.some((t) => t.includes('Mappings: nmap - gl'))).toBe(true);
     expect(world.toasts.some((t) => /line 2 error/.test(t))).toBe(true);
   });

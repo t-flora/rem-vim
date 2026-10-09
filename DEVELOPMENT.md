@@ -15,6 +15,20 @@ commit 122d18e).
 
 ## 0. Work log / current state
 
+### 2026-10-08 — v0.3.0: shifted keys are real (fork `shift-keys` branch)
+
+RemNote 1.28.32's `GlobalStealKeySingleton` runs stock `is-hotkey` (keyCode
+matching, unnamed modifiers must be up). Probed at a real macOS keyboard:
+`a` → `a`, Shift+A → `shift+a`, and `shift+4/6/[/]/;/g/v` all arrive as
+written. So keymap.ts now steals every `shift+<base>` spec (US layout) in
+normal/visual/command/search, the engine's real capital/symbol cases are
+reachable, and the stand-ins that clashed with vim were reassigned (`;` find
+repeat, `:` command line, `V`, `ge`, `` ` `` marks, `gj`/`gk`, `z` freed). New:
+`{`/`}` (empty-bullet paragraphs, `walkParagraph` in pure.ts), `J`, `N`, `@`,
+`@@`, real `gs` delimiters, `:sort!`, shifted mapping lhs. Tutorial v3.
+Unit suite 754/754. NOT yet live-verified beyond the probe: `{`/`}` walking
+over wrapped bullets (`stuckLimit` = 3) is the main thing to watch.
+
 ### 2026-09-28 (night) — v0.2.3 RELEASED; issue #1's host loop reproduced live
 
 - **Released:** `release/0.2.3` merged `--no-ff` into main as 17e6b7a
@@ -3171,7 +3185,12 @@ against RemNote 1.26.30):
   `settleRead()` (two consecutive agreeing reads) like
   `reconcileAfterInsert`/`snapshot()` do. A null read means "no focused
   editor" and must never be cached as an empty line.
-- **Key stealing is SHIFT-BLIND.** The steal matcher reports the bare key
+- **CORRECTED in 0.3.0 (2026-10-07): key stealing is NOT shift-blind.** The
+  1.28.32 matcher is stock is-hotkey by keyCode; `'shift+v'` specs match
+  Shift+V and bare `'v'` matches only plain `v` (verified at a real macOS
+  keyboard with a probe plugin). The original finding below was likely an
+  artifact of the input path used to probe it. Kept for history:
+  **Key stealing is SHIFT-BLIND.** The steal matcher reports the bare key
   regardless of Shift, and `shift+…` specs never match at all (probed live:
   with only `shift+v` stolen, neither `v` nor `V` is captured; with `v`
   stolen, both are captured and reported as `v`; `$` reports as `4`, `Q` as

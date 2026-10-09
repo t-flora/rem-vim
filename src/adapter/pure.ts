@@ -274,9 +274,8 @@ export type StrayEditFallout = 'ignore' | 'markInsertEdit' | 'resetPending';
 
 /**
  * Classify an `EditorTextEdited` event that WE didn't cause (`processing` is
- * false): RemNote's key-steal matcher is shift-blind (keymap.ts) and doesn't
- * always catch a held Shift, so a capital letter can occasionally reach the
- * document as literal text while the engine still believes nothing changed.
+ * false): a key normal mode doesn't steal (keymap.ts) reached the document
+ * as literal text while the engine still believes nothing changed.
  *   - insert mode: the typed text is normal — no engine state to fix, just
  *     remember an edit happened (reconcileAfterInsert skips a redundant read
  *     when nothing was typed).
@@ -418,6 +417,52 @@ export async function walkToBoundary(
     const id = await check();
     if (!id || id === prevId) return;
     prevId = id;
+  }
+}
+
+/** The focused row as `walkParagraph` sees it. */
+export interface ParagraphRow {
+  id: string;
+  empty: boolean;
+}
+
+/**
+ * `{`/`}`: step the caret one row at a time until it reaches the `count`-th
+ * paragraph boundary — an empty bullet that follows at least one non-empty
+ * row (vim skips a run of blank lines before it starts counting). Stops at
+ * the document boundary when there is no such bullet.
+ *
+ * `step` must not move past a boundary (moveCaretVertical is a no-op
+ * there). A wrapped bullet can take a few steps to leave, so the boundary is
+ * only declared after `stuckLimit` consecutive steps with no row change.
+ */
+export async function walkParagraph(
+  step: () => Promise<void>,
+  read: () => Promise<ParagraphRow | undefined>,
+  count: number,
+  opts: { stuckLimit?: number; maxHops?: number } = {}
+): Promise<void> {
+  const { stuckLimit = 3, maxHops = 2000 } = opts;
+  let row = await read();
+  if (!row) return;
+  let hops = 0;
+  for (let c = 0; c < count; c++) {
+    let seenText = !row.empty;
+    let stuck = 0;
+    for (;;) {
+      if (hops++ >= maxHops) return;
+      await step();
+      const next = await read();
+      if (!next) return;
+      if (next.id === row.id) {
+        if (++stuck >= stuckLimit) return; // document boundary
+        continue;
+      }
+      stuck = 0;
+      row = next;
+      if (row.empty && seenText) break;
+      if (!row.empty) seenText = true;
+    }
   }
 }
 

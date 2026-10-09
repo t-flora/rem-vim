@@ -3,8 +3,8 @@ import { useEffect, useRef } from 'react';
 
 /**
  * The `:help` window — a vim cheat sheet written for people who have never
- * used vim, plus the RemNote-specific key differences (shift-blind capture).
- * Opened as a floating widget by `:help` / `;help`; closes on ✕, click
+ * used vim, plus the RemNote-specific key differences.
+ * Opened as a floating widget by `:help`; closes on ✕, click
  * outside, or Escape (the adapter closes it when Escape is pressed).
  *
  * Scrolling: this widget lives in its own floating-widget iframe, entirely
@@ -194,9 +194,10 @@ function VimHelp() {
           <Section title="Start / stop typing">
             <Row keys={['i']} desc="insert text at the cursor" />
             <Row keys={['a']} desc="insert after the cursor" />
-            <Row keys={['g', 'a']} desc="insert at the end of the line  (vim: A)" />
+            <Row keys={['I']} desc="insert at the first character of the line" />
+            <Row keys={['A']} desc="insert at the end of the line" />
             <Row keys={['o']} desc="new bullet below (start typing)" />
-            <Row keys={['g', 'o']} desc="new bullet above" />
+            <Row keys={['O']} desc="new bullet above" />
             <Row keys={['Esc']} desc="back to NORMAL (commands)" />
           </Section>
 
@@ -208,35 +209,38 @@ function VimHelp() {
             <Row keys={['w']} desc="next word" />
             <Row keys={['b']} desc="previous word" />
             <Row keys={['e']} desc="end of word" />
+            <Row keys={['g', 'e']} desc="end of the previous word" />
+            <Row keys={['W', 'B', 'E']} desc="same, by WORD (punctuation counts as part of it)" />
             <Row keys={['0']} desc="start of line" />
-            <Row keys={['g', 'l']} desc="end of line  (vim: $)" />
-            <Row keys={['g', 'h']} desc="first character  (vim: ^)" />
+            <Row keys={['^']} desc="first character" />
+            <Row keys={['$']} desc="end of line" />
             <Row keys={['g', 'g']} desc="top of document" />
-            <Row keys={['g', 'e']} desc="bottom of document  (vim: G)" />
+            <Row keys={['G']} desc="bottom of document" />
+            <Row keys={['{', '}']} desc="previous / next empty bullet (paragraph)" />
             <Row keys={['f', '·']} desc="jump onto next ‘·’ in the line" />
             <Row keys={['t', '·']} desc="jump to just before the next ‘·’  (dt· deletes up to it)" />
-            <Row keys={['g', 'f', '·']} desc="jump onto previous ‘·’ in the line  (vim: F)" />
-            <Row keys={[',']} desc="repeat the last f/gf jump (reversed)" />
+            <Row keys={['F', '·']} desc="jump onto previous ‘·’ in the line  (T: just after it)" />
+            <Row keys={[';', ',']} desc="repeat the last f/t/F/T jump / reversed" />
           </Section>
 
           <Section title="Search">
             <Row keys={['Space']} desc="start a search — type a pattern, Enter jumps to it" />
             <Row keys={['n']} desc="repeat the search forward  (wraps at the end)" />
-            <Row keys={['z']} desc="repeat the search backward  (vim: N; wraps at the start)" />
+            <Row keys={['N']} desc="repeat the search backward  (wraps at the start)" />
             <Row keys={['Esc']} desc="cancel the search prompt without moving" />
           </Section>
 
           <Section title="Scroll & jumps">
             <Row keys={['Ctrl-d']} desc="half page down" />
             <Row keys={['Ctrl-u']} desc="half page up" />
-            <Row keys={['Ctrl-o']} desc="back to before the last gg/ge/:e/search jump" />
+            <Row keys={['Ctrl-o']} desc="back to before the last gg/G/{/}/:e/search jump" />
             <Row keys={['Ctrl-i']} desc="forward again" />
             <Row keys={['Ctrl-h', 'Ctrl-l']} desc="focus previous / next pane" />
           </Section>
 
           <Section title="Marks">
             <Row keys={['m', '·']} desc="remember this bullet as mark ‘·’" />
-            <Row keys={["'", '·']} desc="jump back to mark ‘·’" />
+            <Row keys={["'", '·']} desc="jump back to mark ‘·’  (` works too)" />
             <Row keys={["'", "'"]} desc="back to where the last jump started" />
             <Row keys={[':marks']} desc="list your marks" />
           </Section>
@@ -244,8 +248,8 @@ function VimHelp() {
           <Section title="Macros">
             <Row keys={['q', '·']} desc="record your keys into register ‘·’ (a–z)" />
             <Row keys={['q']} desc="stop recording (typed insert-mode text is not captured)" />
-            <Row keys={['g', 'q', '·']} desc="replay register ‘·’  (vim: @·)" />
-            <Row keys={['g', 'q', '.']} desc="replay the last one again  (vim: @@; counts work: 3gqa)" />
+            <Row keys={['@', '·']} desc="replay register ‘·’" />
+            <Row keys={['@', '@']} desc="replay the last one again  (counts work: 3@a)" />
           </Section>
         </div>
 
@@ -254,48 +258,48 @@ function VimHelp() {
             <Row keys={['x']} desc="delete character" />
             <Row keys={['d', 'w']} desc="delete to next word" />
             <Row keys={['d', 'i', 'w']} desc="delete the word you're in" />
-            <Row keys={['d', 'i', 'b']} desc="delete inside (…)  — also i[ i' i`" />
+            <Row keys={['D']} desc="delete to the end of the line" />
+            <Row keys={['d', 'i', '(']} desc={'delete inside (…)  — also i[ i{ i\' i" i`'} />
             <Row keys={['c', 'w']} desc="change word (delete + type)" />
+            <Row keys={['C']} desc="change to the end of the line" />
             <Row keys={['r', '·']} desc="replace character with ‘·’" />
-            <Row keys={['`']} desc="toggle UPPER/lower case  (vim: ~)" />
-            <Row keys={['g', 'j']} desc="join with the next bullet  (vim: J)" />
+            <Row keys={['~']} desc="toggle UPPER/lower case" />
+            <Row keys={['J']} desc="join with the next bullet" />
             <Row keys={['Ctrl-a', 'Ctrl-x']} desc="number under cursor +1 / −1" />
             <Row keys={['.']} desc="repeat the last change" />
             <Row keys={['d', 'd']} desc="cut whole bullet (with children)" />
             <Row keys={['y', 'y']} desc="copy whole bullet" />
-            <Row keys={['p']} desc="paste bullet(s) below" />
+            <Row keys={['p', 'P']} desc="paste below / above" />
             <Row keys={['u']} desc="undo" />
             <Row keys={['Ctrl-r']} desc="redo" />
           </Section>
 
           <Section title="Select (visual)">
             <Row keys={['v']} desc="select text in the bullet (h/l/w/b/e grow it)" />
-            <Row keys={['v', 'v']} desc="select whole bullets  (vim: V)" />
+            <Row keys={['V']} desc="select whole bullets" />
             <Row keys={['v', 'j/k']} desc="j/k also switch to whole bullets" />
             <Row keys={['v', 'g', 'g']} desc="select up to the top of the doc" />
-            <Row keys={['v', 'g', 'e']} desc="select down to the bottom" />
+            <Row keys={['v', 'G']} desc="select down to the bottom" />
             <Row keys={['d']} desc="cut the selection" />
             <Row keys={['y']} desc="copy it (also to the clipboard)" />
             <Row keys={['p']} desc="paste" />
-            <Row keys={['`']} desc="toggle UPPER/lower case of the selection  (vim: ~, text-select only)" />
-            <Row keys={['.']} desc="indent selected bullets  (vim: >)" />
-            <Row keys={[',']} desc="outdent them  (vim: <)" />
-            <Row keys={[';']} desc="run a command on the selection ↓" />
+            <Row keys={['~']} desc="toggle UPPER/lower case of the selection  (text-select only)" />
+            <Row keys={['>']} desc="indent selected bullets" />
+            <Row keys={['<']} desc="outdent them" />
+            <Row keys={[':']} desc="run a command on the selection ↓" />
             <Row keys={['g', 's', '·']} desc="wrap selection in a delimiter ↓" />
             <Row keys={['Esc']} desc="cancel selection" />
           </Section>
 
           <Section title="Wrap selection (gs)">
-            <Row keys={['g', 's', "'"]} desc={"wrap in ' … '"} />
-            <Row keys={['g', 's', '`']} desc="wrap in ` … `" />
-            <Row keys={['g', 's', '[']} desc="wrap in [ … ]  (] also works)" />
-            <Row keys={['g', 's', 'q']} desc={'wrap in " … "  (q = quote)'} />
-            <Row keys={['g', 's', '8']} desc="wrap in * … *  (8 = shift of *)" />
-            <Row keys={['g', 's', '9']} desc="wrap in ( … )  (0 also works)" />
+            <Row keys={['g', 's', '(']} desc="wrap in ( … )  — either bracket key works" />
+            <Row keys={['g', 's', '[']} desc="wrap in [ … ]  — also { and <" />
+            <Row keys={['g', 's', '"']} desc={'wrap in " … "  — also \' and `'} />
+            <Row keys={['g', 's', '*']} desc="wrap in * … *  — also _" />
           </Section>
 
           <Section title="Command line">
-            <Row keys={[';']} desc="open the : command line (Tab completes)" />
+            <Row keys={[':']} desc="open the command line (Tab completes)" />
             <Row keys={['/']} desc="RemNote's own slash menu (not vim)" />
             <Row keys={[':help']} desc="this window" />
             <Row keys={[':tutorial']} desc="interactive practice document (vimtutor)" />
@@ -314,18 +318,13 @@ function VimHelp() {
       </div>
 
       <div className="note">
-        <b>RemNote differences:</b> RemNote cannot see the Shift key, so
-        CAPITAL commands act like their lowercase letter (<Key k="V" /> ={' '}
-        <Key k="v" />, <Key k="$" /> arrives as <Key k="4" />). Use the{' '}
-        <Key k="g" />
-        -shortcuts where vim uses capitals or symbols: <Key k="g" />
-        <Key k="l" /> = <Key k="$" /> (and <Key k="d" />
-        <Key k="g" />
-        <Key k="l" /> = <Key k="d" />
-        <Key k="$" />, delete to end of line). Deletes and yanks also land on
-        the system clipboard. After clicking with the mouse inside a line,
-        press <Key k="0" /> or <Key k="g" />
-        <Key k="l" /> once to re-anchor the cursor.
+        <b>RemNote differences:</b> each bullet is one line, so <Key k="j" />
+        /<Key k="k" /> move between bullets and <Key k="{" />/<Key k="}" />{' '}
+        stop at empty bullets. <Key k="/" /> stays RemNote's slash menu — search
+        with <Key k="Space" />. Shifted keys are read by physical key on a US
+        layout. Deletes and yanks also land on the system clipboard. After
+        clicking with the mouse inside a line, press <Key k="0" /> or{' '}
+        <Key k="$" /> once to re-anchor the cursor.
       </div>
     </div>
   );

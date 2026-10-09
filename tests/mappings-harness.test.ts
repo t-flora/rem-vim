@@ -119,7 +119,7 @@ describe('mode scoping', () => {
   });
   it('no expansion while typing in the command line', () => {
     const h = mapped(['nmap w gl'], DOC);
-    h.keys(';w<cr>'); // 'w' is command-line text, not the mapped motion
+    h.keys(':w<cr>'); // 'w' is command-line text, not the mapped motion
     expect(h.lastEx).toBe('w');
   });
 });
@@ -132,14 +132,14 @@ describe('noremap: single-level expansion, never recursive', () => {
 });
 
 describe('leader-style command mapping', () => {
-  it('map <space> ; opens the command line; typed verb executes', () => {
-    const h = mapped(['map <space> ;'], DOC);
+  it('map <space> : opens the command line; typed verb executes', () => {
+    const h = mapped(['map <space> :'], DOC);
     h.keys('<space>w<cr>');
     expect(h.lastEx).toBe('w');
     expect(h.mode).toBe('normal');
   });
   it('rhs can be a whole Ex command including <cr>', () => {
-    const h = mapped(['nmap = ;sort<cr>'], DOC);
+    const h = mapped(['nmap = :sort<cr>'], DOC);
     h.keys('=');
     expect(h.lastEx).toBe('sort');
   });

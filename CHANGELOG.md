@@ -4,6 +4,53 @@ All notable changes to the **Vim Mode** RemNote plugin. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version numbers are
 the plugin manifest's.
 
+## [0.3.0] — 2026-10-08
+
+### Shifted keys work
+
+RemNote's key capture does see Shift, as long as a plugin asks for
+`shift+<key>` (RemNote 1.28.32, verified at a real keyboard). Earlier versions
+assumed it couldn't, and routed capitals through lowercase stand-ins. Now the
+real vim keys work.
+
+### Added
+
+- **Capitals and shifted symbols**: `A I O D C S X P Y G V W B E F T ~ $ ^ > <`
+  plus `:` all do what they do in vim. They also work inside commands: `fA`,
+  `r$`, `di(`, `di{`, `di"`, marks like `mA`, and capitals in the command line
+  (`:s/Foo/Bar/`).
+- **`{` / `}`** jump to the previous / next empty bullet (vim's paragraph
+  motion; RemNote has no blank lines). Counts work, and they're jumps
+  (`Ctrl-O` returns).
+- **`J`** joins the next bullet, **`N`** searches backward, **`@a`** plays a
+  macro, **`@@`** replays the last one.
+- **`gs(`**, **`gs"`**, **`gs*`**, **`gs{`**, **`gs<`**, **`gs_`** wrap a
+  visual selection.
+- **`:sort!`** reverses (same as `:sort rev`).
+- `:config` mappings can use shifted keys on the left side too (`nmap H ^`).
+
+### Changed — these keys now mean what they mean in vim
+
+- **`:` opens the command line; `;` repeats the last `f`/`t`/`F`/`T`.**
+  (`;` used to open the command line.) If you want the old behavior back,
+  add `nmap ; :` in `:config`.
+- **`V`** enters line-wise visual directly; **`v`** inside visual exits.
+  (`vv` used to mean `V`.)
+- **`ge`** goes back to the end of the previous word. (It used to mean `G`.)
+- **`` ` ``** jumps to a mark, like `'`. (It used to toggle case; use `~`.)
+- **`gj` / `gk`** move down / up. (`gj` used to join bullets; use `J`.)
+- **`z`** no longer searches backward; use `N`.
+- Still there as aliases: `gl` (`$`), `gh` (`^`), `ga` (`A`), `go` (`O`),
+  `gf` (`F`), `gq` (`@`), and `.` / `,` to indent / outdent in line-wise
+  visual.
+- The **Vim Tutorial** is rewritten for the real keys. Your old copy is kept
+  as "Vim Tutorial (old copy)".
+
+### Known issues
+
+- Shifted keys are matched by physical key on a US layout. On other layouts
+  some symbols may land on different keys; `:config` can remap them.
+
 ## [0.2.3] — 2026-09-28
 
 The first release since 0.1.0. Versions 0.2.0–0.2.2 were development builds

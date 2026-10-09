@@ -597,7 +597,7 @@ describe('dot-repeat interplay with the new semantics', () => {
 describe('command-line editing edges', () => {
   it('typing after Tab-less content builds the buffer, Escape clears it', () => {
     const e = h('abc');
-    e.keys(';sort n');
+    e.keys(':sort n');
     expect(e.commandLine).toBe('sort n');
     e.keys('<esc>');
     expect(e.commandLine).toBe('');
@@ -606,26 +606,26 @@ describe('command-line editing edges', () => {
 
   it('backspace across the whole buffer exits command mode', () => {
     const e = h('abc');
-    e.keys(';ab<bs><bs><bs>');
+    e.keys(':ab<bs><bs><bs>');
     expect(e.mode).toBe('normal');
   });
 
   it('enter on whitespace-only command line runs nothing', () => {
     const e = h('abc');
-    e.keys('; <cr>');
+    e.keys(': <cr>');
     expect(e.lastEx).toBeNull();
     expect(e.mode).toBe('normal');
   });
 
-  it('count digits typed before ; do not leak into the command line', () => {
+  it('count digits typed before : do not leak into the command line', () => {
     const e = h('abc');
-    e.keys('3;w<cr>');
+    e.keys('3:w<cr>');
     expect(e.lastEx).toBe('w');
   });
 
   it('special keys other than printables are ignored while typing', () => {
     const e = h('abc');
-    e.keys(';e<c-d>x');
+    e.keys(':e<c-d>x');
     expect(e.commandLine).toBe('ex');
   });
 });
@@ -649,11 +649,11 @@ describe('multi-line stability (larger documents)', () => {
     expect(e.caret).toBe(2); // the clamped column persists (adapter model)
   });
 
-  it('gg and ge from the middle of a long doc', () => {
+  it('gg and G from the middle of a long doc', () => {
     const e = h([...many], 20, 3);
     e.keys('gg');
     expect(e.row).toBe(0);
-    e.keys('ge');
+    e.keys('G');
     expect(e.row).toBe(39);
   });
 
@@ -666,13 +666,13 @@ describe('multi-line stability (larger documents)', () => {
 
   it('V-selection across many lines with a big count clamps', () => {
     const e = h([...many], 35, 0);
-    e.keys('vv99jd');
+    e.keys('V99jd');
     expect(e.lines.length).toBe(35);
   });
 
   it('undo after a large visual-line cut restores everything', () => {
     const e = h([...many], 5, 0);
-    e.keys('vv9jd');
+    e.keys('V9jd');
     expect(e.lines.length).toBe(30);
     e.keys('u');
     expect(e.lines).toEqual(many);

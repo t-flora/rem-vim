@@ -186,17 +186,18 @@ a *live native text selection* resizes it instead of collapsing it — a
 collapsed `selectText` range is the one API call that both clears a selection
 and sets the caret absolutely.
 
-**Shift-blindness (the platform constraint that shapes half the keymap).**
-RemNote's `stealKeys` matcher cannot distinguish Shift: a bound spec like `'v'`
-fires for both `v` and `Shift+V`, reporting the identical spec string, while a
-`'shift+v'`-style spec never matches anything. Consequently no capital letter
-or shifted symbol can be bound to a different command than its lowercase key —
-`keymap.ts`'s `SPEC_TO_SYM` table only has room for one mapping per spec. The
-established workaround is unshifted synonyms: `g`-chords (`gl`=`$`, `gh`=`^`,
-`ge`=`G`, `ga`=`A`, `go`=`O`), reused punctuation (`` ` ``=`~`, `;`=`:`,
-`.`/`,`=`>`/`<` but *only* inside visual-line mode). Follow this exact pattern
-for any new capital-only vim command — don't try to special-case the real key.
-Ctrl-combinations are unaffected (`ctrl+d` etc. match correctly); `Ctrl-W` is
+**Shifted keys (how RemNote matches steals).** RemNote's `stealKeys` matcher
+is stock `is-hotkey` by keyCode (read from the 1.28.32 bundle, verified at a
+real keyboard 2026-10-07): a bare spec `'v'` matches only an unshifted `v`, and
+capitals/shifted symbols must be stolen as `'shift+<unshifted key>'`
+(`'shift+v'`, `'shift+4'` for `$`, `'shift+['` for `{`) — they are reported back
+under that exact spec and `keymap.ts` maps them to the real symbol. Never write
+a spec as the shifted character itself: is-hotkey reads `'$'` as Home and `'{'`
+as F12. keyCode is physical, so `SHIFTED_BASE` assumes a US layout. (Versions
+before 0.3.0 believed stealing was shift-blind and used unshifted synonyms;
+the harmless ones — `gl gh ga go gf gq`, visual-line `.`/`,` — remain as
+aliases.)
+Ctrl-combinations match the same way (`ctrl+d` etc.); `Ctrl-W` is
 stolen and handled but **never arrives** on the desktop app specifically
 (Electron consumes it before the renderer's key-steal hook sees it — verified
 with kernel-level `uinput`, so CDP-synthesized e2e input is blind to this too)
@@ -290,7 +291,7 @@ e2e/.env`), and cannot run in CI. Run `stress.mjs` specifically after touching
 anything that moves focus across Rems (`removeRems`, `walkCaretOut`,
 `walkCaretTo`) — it's what originally caught "dead cursor after cut" bugs.
 
-If a change is user-visible, update the `;help` sheet
+If a change is user-visible, update the `:help` sheet
 (`src/widgets/vim_help.tsx`) and the feature status table in DEVELOPMENT.md
 §0.5.
 

@@ -72,8 +72,7 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
   doesn't support it yet, so there you get the thin colored caret + row
   highlight until RemNote upgrades Electron — it will then light up
   automatically.
-- Built-in cheat sheet for everything below: type **`;help`** (this plugin's
-  `:help`) or run **"Vim: Help / cheat sheet"** from the command palette.
+- Built-in cheat sheet for everything below: type **`:help`** or run **"Vim: Help / cheat sheet"** from the command palette.
   `j`/`k` scroll it, `Esc` closes it.
 
 ### Getting started: the Vim Tutorial
@@ -81,53 +80,50 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active.
 The tutorial is an ordinary RemNote document called **"Vim Tutorial"**: 14
 short lessons written as bullets, each with practice lines you edit with the
 real keys, vimtutor-style. It opens by itself the first time the plugin
-activates; reopen it any time with **`;tutorial`** (or `;vimtutor`, or
+activates; reopen it any time with **`:tutorial`** (or `:vimtutor`, or
 **"Vim: Tutorial"** in the command palette).
 
-It's yours to wreck — delete it and the next `;tutorial` seeds a fresh copy.
+It's yours to wreck — delete it and the next `:tutorial` seeds a fresh copy.
 When a plugin update brings new lessons, your copy is replaced with the new
 one and the old one is kept as **"Vim Tutorial (old copy)"**, in case you
 wrote notes in it.
 
-### The one thing to know first: Shift-blind keys
+### Shifted keys
 
-RemNote's plugin sandbox **cannot see the Shift key** when it intercepts
-keystrokes. So capitals and shifted symbols are reached through lowercase
-**synonyms** instead of Shift:
+Capitals and shifted symbols are the real vim keys: `A`, `G`, `V`, `$`, `{`,
+`:` and so on. RemNote matches them by **physical key on a US layout**, so on
+other layouts a few symbols may sit elsewhere (remap them with `:config`).
 
-| You want (vim) | Type here | | You want (vim) | Type here |
-|---|---|---|---|---|
-| `$` (end of line) | `gl` | | `G` (last line) | `ge` |
-| `^` (first non-blank) | `gh` | | `A` (append at end) | `ga` |
-| `O` (open above)* | `go` | | `~` (toggle case) | `` ` `` (backtick) |
-| `F<c>` (find backward) | `gf<c>` | | `V` (visual-line) | `vv` |
-| `N` (search backward) | `z` | | `@a` / `@@` (play macro) | `gqa` / `gq.` |
-| `:` (command line) | `;` | | `>` / `<` (visual-line indent) | `.` / `,` |
+Keys whose meaning changed in 0.3.0, for anyone coming from 0.2: `:` opens the
+command line and `;` repeats `f`/`t` · `V` is line-wise visual and `v` inside
+visual exits · `ge` is "end of previous word" · `` ` `` jumps to a mark · `gj`
+/ `gk` move down/up · `J` joins · `N` searches backward · `@` plays macros.
+Still there as aliases: `gl`=`$` `gh`=`^` `ga`=`A` `go`=`O` `gf`=`F` `gq`=`@`.
 
-<sub>*In RemNote a bullet is one line, so `o`/`go` both create a **sibling**
-bullet.</sub>
+<sub>In RemNote a bullet is one line, so `o`/`O` create a **sibling**
+bullet and `{`/`}` stop at empty bullets.</sub>
 
 ### Keybinding cheat sheet
 
 | Category | Keys |
 |---|---|
-| **Modes** | `i` insert · `Esc` normal · `v` charwise visual · `vv` visual-line (or `v` then `j`/`k`) · `;` command line · `Space` search |
-| **Motions** | `h l 0 w b e` · `f<c>` `t<c>` `gf<c>` · `,` (repeat find, reversed) · counts (`3w`, `2fx`) · `gh`=`^` `gl`=`$` `gg` `ge`=`G` |
-| **Operators** | `d c y` + any motion/text-object · `x X s S D C` · `r<c>` replace char · `` ` ``=`~` toggle case · `dgl`=`d$` `dgh`=`d^` |
-| **Text objects** | `iw aw` · pairs `ib ab` (=`i(`/`a(`), `i[ a[` · quotes `i' a'`, `` i` a` `` — under `d`/`c`/`y` and in visual (`vi[`) |
-| **Search** | `Space` + a pattern + `Enter` jumps to the next match anywhere in the document (a regex, case-sensitive) · `n` next · `z` previous (vim: `N`) · wraps around the ends · `Ctrl-O` jumps back |
-| **Macros** | `q<a-z>` record · `q` stop · `gq<a-z>` play (vim: `@`) · `gq.` replay the last one (vim: `@@`) · counts (`3gqa`) · `qaq` empties a register |
-| **Marks** | `m<c>` set · `'<c>` jump back (adds a jumplist entry) · `''` back to pre-jump spot · `:marks` list |
-| **Lines / bullets** | `gj`=`J` join next sibling (adopts its children; `3gj`) · `o`/`go` new sibling · `C-a`/`C-x` increment/decrement a number |
-| **Repeat** | `.` repeat last normal-mode change (`dw`, `3x`, `r<c>`, `p`, `gj`, `C-a`, …) |
-| **Visual** | charwise `v` + `h l w b e f gf gl gh` then `d x c s y p o`, `` ` `` toggle case, `gs<delim>` wrap in delimiters (`gs9` `(…)` · `gsq` `"…"` · `gs[` `[…]` · `gs'` · ``gs` `` · `gs8` `*…*`) · visual-line extends across bullets with `j k gg ge`; `d`/`x` cut, `y` yank, `p` paste, `.`/`,` indent/outdent · `;` opens the command line with the selected bullets as its range (`:s`, `:sort`, `:d`, …) |
+| **Modes** | `i a I A` insert · `Esc` normal · `v` charwise visual · `V` visual-line (or `v` then `j`/`k`) · `:` command line · `Space` search |
+| **Motions** | `h l 0 ^ $ w b e W B E ge gE` · `f<c> t<c> F<c> T<c>` · `;` / `,` repeat find / reversed · `gg G` · `{ }` previous/next empty bullet · counts (`3w`, `2fx`, `2}`) |
+| **Operators** | `d c y > <` + any motion/text-object · `x X s S D C` · `r<c>` replace char · `~` toggle case · `dd cc yy >> <<` |
+| **Text objects** | `iw aw iW aW` · pairs `i( a(` (`ib`), `i{ a{` (`iB`), `i[ a[` · quotes `i' a' i" a"`, `` i` a` `` — under `d`/`c`/`y` and in visual (`vi[`) |
+| **Search** | `Space` + a pattern + `Enter` jumps to the next match anywhere in the document (a regex, case-sensitive) · `n` next · `N` previous · wraps around the ends · `Ctrl-O` jumps back |
+| **Macros** | `q<a-z>` record · `q` stop · `@<a-z>` play · `@@` replay the last one · counts (`3@a`) · `qaq` empties a register |
+| **Marks** | `m<c>` set · `'<c>` or `` `<c> `` jump back (adds a jumplist entry) · `''` back to pre-jump spot · `:marks` list |
+| **Lines / bullets** | `J` join next sibling (adopts its children; `3J`) · `o`/`O` new sibling · `p`/`P` paste below/above · `Y` yank bullet · `C-a`/`C-x` increment/decrement a number |
+| **Repeat** | `.` repeat last normal-mode change (`dw`, `3x`, `r<c>`, `p`, `J`, `C-a`, …) |
+| **Visual** | charwise `v` + any motion, then `d x c s y p o`, `~` toggle case, `>`/`<` indent, `gs<delim>` wrap in delimiters (`gs(` · `gs"` · `gs[` · `gs{` · `gs<` · `gs'` · ``gs` `` · `gs*` · `gs_`) · visual-line `V` extends across bullets with `j k gg G`; `d`/`x` cut, `y` yank, `p` paste, `>`/`<` indent/outdent · `:` opens the command line with the selected bullets as its range (`:s`, `:sort`, `:d`, …) |
 | **Clipboard** | deletes/yanks route through the **native OS clipboard** (whole bullets serialize as RemNote's own `- bullet` text, subtrees included) |
 | **Navigation** | `C-o`/`C-i` jumplist back/forward · `C-h`/`C-l` focus previous/next pane · `C-d`/`C-u` scroll half-page |
 | **Undo** | `u` undo · `C-r` redo (delegates to RemNote's history) |
 
-### Ex command line (`;`)
+### Ex command line (`:`)
 
-Open with **`;`** (RemNote keeps `/` for its own slash menu). Tab cycles a
+Open with **`:`** (RemNote keeps `/` for its own slash menu). Tab cycles a
 **wildmenu** of suggestions with live document search.
 
 | Command | Does |
@@ -137,7 +133,7 @@ Open with **`;`** (RemNote keeps `/` for its own slash menu). Tab cycles a
 | `:10` (any number) | Jump to that bullet, counted from the top of the document (a jump — `Ctrl-O` returns) |
 | `:e <name>` | Search your knowledge base and open the best match (a jump) |
 | `:s/pat/repl/[gia]` | Substitute — visual selection or focused bullet as range; `g` all, `i` ignore-case, `a` whole doc |
-| `:sort [n] [rev]` | Sort selection siblings (or the focused bullet's children); `n` numeric, `rev` reversed |
+| `:sort [n] [rev]` / `:sort!` | Sort selection siblings (or the focused bullet's children); `n` numeric, `rev` or `!` reversed |
 | `:t` / `:co[py]` | Duplicate the selected bullets below |
 | `:d` / `:y` | Delete / yank bullets to the register + OS clipboard (like `dd`/`yy`) |
 | `:g/pat/d` | Delete every bullet in the doc whose text matches (subtree included) |
@@ -157,11 +153,12 @@ bullet, vim style:
 
 ```
 " comments start with a double quote
-nmap - gl          " '-' jumps to end of line
+nmap - $           " '-' jumps to end of line
 nmap s cw          " 's' = change word
+nmap H ^           " shifted keys work on the left side too
 map <c-n> j        " normal + visual modes
 vmap q <esc>       " visual modes only
-nmap <space> ;     " space as a command-line leader
+nmap <space> :     " space as a command-line leader
 unmap ,            " give ',' back to RemNote (normal+visual)
 ```
 
@@ -171,16 +168,14 @@ spellings work too — every mapping here is noremap: the right side is never
 re-expanded, so loops are impossible). Later lines win. `:map` lists what's
 active plus any parse errors with their bullet numbers.
 
-**Left side** (the key you press) — one key only: an unshifted character,
-`<space>`, `<cr>`, `<bs>`, `<tab>`, or a `<c-x>` ctrl chord. Shifted keys
-(`$`, capitals…) can never be captured (see Shift-blind keys above), digits
-are counts, and Escape is reserved.
+**Left side** (the key you press) — one key only: a character (capitals and
+shifted symbols included; write `<lt>` for `<`), `<space>`, `<cr>`, `<bs>`,
+`<tab>`, or a `<c-x>` ctrl chord. Digits are counts, and Escape is reserved.
 
-**Right side** — up to 32 keys in the same notation, *including keys you
-can't type live*: the right side feeds the engine directly, so `nmap - $`
-gives you a real `$`, and `G`, `A`, `~` etc. all work. Whitespace separates
-tokens (write `<space>` to press space). Counts and operators compose:
-with `nmap - gl`, `3-` and `d-` behave like `3gl` / `dgl`.
+**Right side** — up to 32 keys in the same notation, fed to the engine
+directly. Whitespace separates tokens (write `<space>` to press space).
+Counts and operators compose: with `nmap - $`, `3-` and `d-` behave like
+`3$` / `d$`.
 
 Fine print:
 
@@ -194,8 +189,9 @@ Fine print:
   waits for a character, it types into the document (the pending stays armed).
 - You can't lock yourself out: Escape and insert-mode typing are untouchable,
   and the command palette always has **"Vim: Edit keybindings (:config)"**
-  (plus "Vim: Toggle vim mode"). Unmapping `;` without another route to the
-  command line earns you a warning.
+  (plus "Vim: Toggle vim mode"). Unmapping `:` without another route to the
+  command line earns you a warning. Want the pre-0.3 `;` command line back?
+  `nmap ; :`.
 - `<c-w>` never reaches the desktop app (Electron eats it); `<c-e>`/`<c-y>`
   are RemNote's audio-embed hotkeys — you'll get a warning if you bind them.
 
@@ -204,9 +200,9 @@ Fine print:
 | Palette command | Does |
 |---|---|
 | **Vim: Toggle vim mode** | Turn the plugin's key handling off / back on |
-| **Vim: Help / cheat sheet** | Same as `;help` |
-| **Vim: Edit keybindings (:config)** | Same as `;config` — reachable even if a mapping broke `;` |
-| **Vim: Tutorial (interactive practice document)** | Same as `;tutorial` |
+| **Vim: Help / cheat sheet** | Same as `:help` |
+| **Vim: Edit keybindings (:config)** | Same as `:config` — reachable even if a mapping broke `:` |
+| **Vim: Tutorial (interactive practice document)** | Same as `:tutorial` |
 
 One setting, on the plugin's settings page: **Start in normal mode** (on by
 default). Turn it off to start in insert mode instead.
@@ -220,9 +216,8 @@ sandbox (the gory details live in
 [DEVELOPMENT.md](https://github.com/onegraund/remnote-vim/blob/main/DEVELOPMENT.md)
 §9):
 
-- **Capitals/symbols need synonyms** — the Shift-blind remaps above; `i{`/`i"`
-  exist in the engine but can't be typed live. (`:config` mappings can put
-  any of these on keys you like — `nmap - $`.)
+- **Shifted keys assume a US layout** — RemNote matches them by physical
+  key. Remap with `:config` if a symbol lands elsewhere on your keyboard.
 - **Macros and `.` can't replay typed text.** Insert-mode typing goes straight
   to RemNote, never through the plugin, so a macro records the commands
   around it but not the text, and changes that enter insert mode (`cw`, `o`)
@@ -231,7 +226,7 @@ sandbox (the gory details live in
   can't be rebuilt from plain text). Whole-bullet `dd`/`yy`/`p` keep
   everything.
 - **Caret column can desync** after clicking mid-line (the collapsed caret is
-  unreadable from the sandbox). Re-anchor with `0`/`gl`, or enter+leave insert.
+  unreadable from the sandbox). Re-anchor with `0`/`$`, or enter+leave insert.
 - **`Ctrl-E`/`Ctrl-Y`** are unbound — there is no view-scroll API to hook.
 - **`j`/`k` move between bullets**, because a RemNote bullet is one line by
   construction.

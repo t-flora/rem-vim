@@ -72,10 +72,10 @@ describe('space-search end to end (performSearch)', () => {
     expect(world.toasts).toContain('search hit BOTTOM, continuing at TOP');
   });
 
-  it('z steps backward, wrapping to the bottom with the mirrored toast', async () => {
+  it('N steps backward, wrapping to the bottom with the mirrored toast', async () => {
     const { world, adapter, doc } = await bootDoc(['alpha one', 'bravo two', 'charlie one']);
     await type(world, adapter, ['space', 'o', 'n', 'e', 'enter']); // (row 0, col 6)
-    await type(world, adapter, ['z']); // nothing before (0,6) → wraps to (2,8)
+    await type(world, adapter, ['shift+n']); // nothing before (0,6) → wraps to (2,8)
     expect(world.focusedRemId).toBe(doc.childIds[2]);
     expect(world.toasts).toContain('search hit TOP, continuing at BOTTOM');
   });
@@ -112,27 +112,27 @@ describe('space-search end to end (performSearch)', () => {
 describe(':N goto-line end to end (gotoLine)', () => {
   it(':4 lands on the 4th bullet from the top', async () => {
     const { world, adapter, doc } = await bootDoc(['one', 'two', 'three', 'four']);
-    await type(world, adapter, [';', '4', 'enter']);
+    await type(world, adapter, ['shift+;', '4', 'enter']);
     expect(world.focusedRemId).toBe(doc.childIds[3]);
   });
 
   it(':1 returns to the first bullet from anywhere', async () => {
     const { world, adapter, doc } = await bootDoc(['one', 'two', 'three']);
     world.focusRow(doc.childIds[2]);
-    await type(world, adapter, [';', '1', 'enter']);
+    await type(world, adapter, ['shift+;', '1', 'enter']);
     expect(world.focusedRemId).toBe(doc.childIds[0]);
   });
 
   it(':99 past the end clamps to the last bullet (vim :999 behavior)', async () => {
     const { world, adapter, doc } = await bootDoc(['one', 'two', 'three']);
-    await type(world, adapter, [';', '9', '9', 'enter']);
+    await type(world, adapter, ['shift+;', '9', '9', 'enter']);
     expect(world.focusedRemId).toBe(doc.childIds[2]);
   });
 
   it(':0 clamps to line 1 (vim has no line 0)', async () => {
     const { world, adapter, doc } = await bootDoc(['one', 'two']);
     world.focusRow(doc.childIds[1]);
-    await type(world, adapter, [';', '0', 'enter']);
+    await type(world, adapter, ['shift+;', '0', 'enter']);
     expect(world.focusedRemId).toBe(doc.childIds[0]);
   });
 
@@ -140,7 +140,7 @@ describe(':N goto-line end to end (gotoLine)', () => {
     const { world, adapter, doc } = await bootDoc(['a', 'b', 'd']);
     const c = world.makeRem(['c']);
     await c.setParent(world.rems.get(doc.childIds[1])!); // nest c under b
-    await type(world, adapter, [';', '3', 'enter']); // pre-order: a b c d
+    await type(world, adapter, ['shift+;', '3', 'enter']); // pre-order: a b c d
     expect(world.focusedRemId).toBe(c._id);
   });
 });

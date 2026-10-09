@@ -90,35 +90,45 @@ describe('tutorial document content structure', () => {
     }
     const fingerprint = h.toString(16).padStart(8, '0');
     expect({ version: TUTORIAL_VERSION, fingerprint }).toEqual({
-      version: 2,
-      fingerprint: 'd146091f',
+      version: 3,
+      fingerprint: 'b7438ea6',
     });
   });
 });
 
 describe('tutorial practice lines do what they say', () => {
-  it('lesson 0: ge dives to the last bullet of the document, gg surfaces back to the top', () => {
+  it('lesson 0: } hops to the blank bullet before Lesson 1, { comes back up', () => {
+    const from = texts.indexOf(lineWith('} jumps forward to the next empty bullet'));
+    const e = new Harness(texts, from, 0);
+    e.keys('}');
+    expect(texts[e.row]).toBe('');
+    expect(texts[e.row + 1]).toBe('Lesson 1 — moving on a line');
+    e.keys('{');
+    expect(e.row).toBe(0); // no blank bullet above: { stops at the top
+  });
+
+  it('lesson 0: G dives to the last bullet of the document, gg surfaces back to the top', () => {
     const from = texts.indexOf(lineWith('then gg to come back to the top'));
     const e = new Harness(texts, from, 0);
-    e.keys('ge');
+    e.keys('G');
     expect(e.row).toBe(texts.length - 1);
     e.keys('gg');
     expect(e.row).toBe(0);
   });
 
-  it('lesson 1: gl runs to the end of the line, 0 snaps back to the start', () => {
+  it('lesson 1: $ runs to the end of the line, 0 snaps back to the start', () => {
     const line = lineWith('then 0 to snap back');
     const e = new Harness([line]);
-    e.keys('gl');
+    e.keys('$');
     expect(e.caret).toBe(line.length);
     e.keys('0');
     expect(e.caret).toBe(0);
   });
 
-  it('lesson 2: go opens a fresh bullet above and enters insert mode', () => {
-    const line = lineWith('press go to open a bullet above');
+  it('lesson 2: O opens a fresh bullet above and enters insert mode', () => {
+    const line = lineWith('press O to open a bullet above');
     const e = new Harness([line]);
-    e.keys('go');
+    e.keys('O');
     expect(e.mode).toBe('insert');
     expect(e.lines).toEqual(['', line]); // new empty bullet above, focused
     expect(e.row).toBe(0);
@@ -173,27 +183,27 @@ describe('tutorial practice lines do what they say', () => {
     expect(e.row).toBe(from);
   });
 
-  it('lesson 8: v e backtick shouts the whisper', () => {
+  it('lesson 8: v e ~ shouts the whisper', () => {
     const line = lineWith('shhh');
     const e = new Harness([line], 0, line.indexOf('shhh'));
-    e.keys('ve`');
+    e.keys('ve~');
     expect(e.mode).toBe('normal');
     expect(e.line).toContain('SHHH');
   });
 
-  it('lessons 9/10: the ;5, ;config and ;map practices submit what they promise', () => {
+  it('lessons 9/10: the :5, :config and :map practices submit what they promise', () => {
     const e = new Harness([lineWith('a bare number is a jump')]);
-    e.keys(';5<cr>');
+    e.keys(':5<cr>');
     expect(e.lastEx).toBe('5');
-    const e2 = new Harness([lineWith('type ;config then Enter')]);
-    e2.keys(';config<cr>');
+    const e2 = new Harness([lineWith('type :config then Enter')]);
+    e2.keys(':config<cr>');
     expect(e2.lastEx).toBe('config');
-    const e3 = new Harness([lineWith('type ;map then Enter')]);
-    e3.keys(';map<cr>');
+    const e3 = new Harness([lineWith('type :map then Enter')]);
+    e3.keys(':map<cr>');
     expect(e3.lastEx).toBe('map');
   });
 
-  it('lesson 11: qd2xjq recorded on the first junk bullet, gqd and gq. fix the rest', () => {
+  it('lesson 11: qd2xjq recorded on the first junk bullet, @d and @@ fix the rest', () => {
     const r = texts.indexOf(lineWith('xxone of three'));
     expect(texts[r + 1]).toBe('xxtwo of three');
     expect(texts[r + 2]).toBe('xxthree of three');
@@ -202,9 +212,9 @@ describe('tutorial practice lines do what they say', () => {
     expect(e.state.macros['d']).toEqual(['2', 'x', 'j']);
     expect(e.lines[r]).toBe('one of three');
     expect(e.row).toBe(r + 1); // the recorded j already stepped down
-    e.keys('gqd');
+    e.keys('@d');
     expect(e.lines[r + 1]).toBe('two of three');
-    e.keys('gq.');
+    e.keys('@@');
     expect(e.lines[r + 2]).toBe('three of three');
   });
 
@@ -225,14 +235,14 @@ describe('tutorial practice lines do what they say', () => {
     expect(e2.line).not.toMatch(/is is/);
   });
 
-  it('lesson 4: cw on the wrong word enters insert mode, backtick fixes aNGRY', () => {
+  it('lesson 4: cw on the wrong word enters insert mode, ~ fixes aNGRY', () => {
     const line = lineWith('sky is green');
     const e = new Harness([line], 0, line.indexOf('green'));
     e.keys('cw');
     expect(e.mode).toBe('insert');
     expect(e.line).not.toContain('green');
     const e2 = new Harness(['aNGRY']);
-    e2.keys('`');
+    e2.keys('~');
     expect(e2.line).toBe('ANGRY');
   });
 
@@ -258,32 +268,32 @@ describe('tutorial practice lines do what they say', () => {
     expect(e.row).toBe(from); // the mention inside the lesson line itself
     e.keys('n');
     expect(e.row).toBe(texts.length - 1); // the hidden one at the bottom
-    e.keys('z');
+    e.keys('N');
     expect(e.row).toBe(from);
   });
 
-  it('lesson 8: v + e + gs9 wraps important in parens; vv j . indents both practice bullets', () => {
+  it('lesson 8: v + e + gs( wraps important in parens; V j > indents both practice bullets', () => {
     const line = lineWith('important with v');
     const e = new Harness([line], 0, line.indexOf('important'));
-    e.keys('vegs9');
+    e.keys('vegs(');
     expect(e.line).toContain('(important)');
-    const row = texts.indexOf(lineWith('then . to indent both'));
+    const row = texts.indexOf(lineWith('then > to indent both'));
     const e2 = new Harness(texts, row, 0);
-    e2.keys('vvj.');
+    e2.keys('Vj>');
     expect(e2.indents[row]).toBe(1);
     expect(e2.indents[row + 1]).toBe(1);
-    e2.keys('vvj,');
+    e2.keys('Vj<');
     expect(e2.indents[row]).toBe(0);
   });
 
-  it('lesson 9: the ;s practice line submits the substitute it promises', () => {
+  it('lesson 9: the :s practice line submits the substitute it promises', () => {
     const line = lineWith('this line is bad');
     const e = new Harness([line]);
-    e.keys(';s/bad/good/<cr>');
+    e.keys(':s/bad/good/<cr>');
     expect(e.lastEx).toBe('s/bad/good/');
   });
 
-  it('lesson 11: qafexpq records the teh-fix; gqa and gq. finish the line', () => {
+  it('lesson 11: qafexpq records the teh-fix; @a and @@ finish the line', () => {
     const line = lineWith('teh teh teh');
     // the claim only holds if the broken word appears nowhere earlier in the
     // sentence — the cursor lands on the FIRST occurrence
@@ -291,7 +301,7 @@ describe('tutorial practice lines do what they say', () => {
     const e = new Harness([line], 0, line.indexOf('teh'));
     e.keys('qafexpq');
     expect(e.state.macros['a']).toEqual(['f', 'e', 'x', 'p']);
-    e.keys('gqagq.');
+    e.keys('@a@@');
     expect(e.line.slice(-'the the the'.length)).toBe('the the the');
     expect(e.line).not.toContain('teh');
   });
@@ -312,14 +322,16 @@ describe('tutorial practice lines do what they say', () => {
     expect(e.line.endsWith(': happy')).toBe(true);
   });
 
-  it('lesson 12: dib empties call(this, that) from anywhere inside the brackets', () => {
+  it('lesson 12: di( (and its dib alias) empties call(this, that) from anywhere inside', () => {
     const line = lineWith('call(this, that)');
-    // the only round brackets on the line are the practice pair
-    expect(line.split('(').length - 1).toBe(1);
+    // the practice pair ends the line, after the di( it names
+    expect(line.endsWith(': call(this, that)')).toBe(true);
     for (const inside of ['this', 'that']) {
-      const e = new Harness([line], 0, line.indexOf(inside));
-      e.keys('dib');
-      expect(e.line.endsWith('call()')).toBe(true);
+      for (const keys of ['di(', 'dib']) {
+        const e = new Harness([line], 0, line.indexOf(inside));
+        e.keys(keys);
+        expect(e.line.endsWith('call()'), keys).toBe(true);
+      }
     }
   });
 
@@ -347,14 +359,14 @@ describe('tutorial practice lines do what they say', () => {
     expect(e2.line).toContain('press 5 and then'); // only the first number changed
   });
 
-  it('lesson 13: gj glues the split sentence back into one bullet', () => {
+  it('lesson 13: J glues the split sentence back into one bullet', () => {
     const first = lineWith('got split across');
     const r = texts.indexOf(first);
     const second = texts[r + 1];
     expect(second.startsWith('two bullets')).toBe(true);
     expect(TUTORIAL_LINES[r].indent).toBe(TUTORIAL_LINES[r + 1].indent); // siblings
     const e = new Harness(texts, r, 0);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines[r]).toBe(`${first} ${second}`);
     expect(e.lines).toHaveLength(texts.length - 1);
   });
@@ -428,7 +440,7 @@ describe('tutorial document lifecycle (real adapter, fake plugin)', () => {
 
   it(':tutorial typed on the command line opens it', async () => {
     const { world, adapter } = await boot();
-    for (const spec of [';', 't', 'u', 't', 'o', 'r', 'i', 'a', 'l', 'enter']) {
+    for (const spec of ['shift+;', 't', 'u', 't', 'o', 'r', 'i', 'a', 'l', 'enter']) {
       world.stealKey(spec);
     }
     await drain(adapter);

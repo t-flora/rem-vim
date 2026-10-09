@@ -44,6 +44,7 @@ import {
   SearchUnit,
   settleRead,
   truncateLabel,
+  walkParagraph,
   walkToBoundary,
   walkToRoot,
   walkToTarget,
@@ -292,11 +293,10 @@ export class VimAdapter {
 
     // A text edit RemNote tells us about while WE are not the one editing
     // (`!this.processing`) can only be native typing that slipped past our
-    // key-stealing — normal mode steals every letter/digit/punct spec, but
-    // RemNote's steal matcher is shift-blind (keymap.ts) and empirically does
-    // not always catch a held Shift, so a capital letter can occasionally
-    // reach the document as literal text while the engine still believes
-    // nothing changed. Two distinct uses of the same signal:
+    // key-stealing — normal mode steals every letter, digit and shifted key,
+    // but not everything (e.g. '/', '-', modifier combos RemNote owns), so a
+    // stray character can still reach the document as literal text while the
+    // engine believes nothing changed. Two distinct uses of the same signal:
     //  - insert mode: just remember an edit happened (reconcileAfterInsert
     //    below uses this to skip its own confirmatory read when nothing was
     //    typed, instead of blindly re-reading every time).
@@ -618,6 +618,7 @@ export class VimAdapter {
       case 'deleteRem':
       case 'pasteRem':
       case 'goDoc':
+      case 'paragraph':
       case 'indent':
       case 'outdent':
       case 'scroll':
@@ -1180,6 +1181,19 @@ export class VimAdapter {
         break;
       }
 
+      case 'paragraph': {
+        await this.recordJump(); // { and } are jumps in vim — Ctrl-O returns
+        await walkParagraph(
+          () => editor.moveCaretVertical(a.dir),
+          async () => {
+            const f = await focus.getFocusedRem();
+            return f ? { id: f._id, empty: flattenRich(f.text).trim() === '' } : undefined;
+          },
+          a.count
+        );
+        break;
+      }
+
       case 'jump': {
         const cur = (await focus.getFocusedRem())?._id;
         // Only resolve docId (an SDK call) when computeJumpStep will actually
@@ -1388,8 +1402,7 @@ export class VimAdapter {
    * it points the user at Ctrl/Cmd-P.
    */
   private async runEx(cmd: string) {
-    // Shift is invisible to the key capture, so ':Ex' arrives as ':ex' —
-    // verbs are matched case-insensitively.
+    // Verbs are matched case-insensitively (':Ex' and ':ex' both work).
     const [verbRaw, ...restParts] = cmd.split(/\s+/);
     const verb = verbRaw.toLowerCase();
     const arg = restParts.join(' ').trim();
@@ -1475,6 +1488,9 @@ export class VimAdapter {
         return;
       case 'sort':
         await this.sortBullets(arg);
+        return;
+      case 'sort!': // vim's bang = reverse
+        await this.sortBullets(`${arg} rev`);
         return;
       case 't':
       case 'co':
@@ -1676,8 +1692,8 @@ export class VimAdapter {
   /**
    * `:sort [n] [rev]` — with a visual selection: sort the selected sibling
    * bullets; without: sort the focused bullet's CHILDREN (the useful outliner
-   * reading of vim's line sort). `n` compares leading numbers, `rev`
-   * reverses (vim's `:sort!` bang is untypeable — shift-blind).
+   * reading of vim's line sort). `n` compares leading numbers, `rev` (or
+   * vim's `:sort!`) reverses.
    */
   private async sortBullets(arg: string) {
     const app = this.plugin.app;
@@ -2124,7 +2140,7 @@ export class VimAdapter {
       const seed = [
         '" vim keymap — one mapping per bullet: map/nmap/vmap <key> <keys…>',
         '" unmap <key> returns a key to RemNote · :mapload applies · :map lists',
-        '" the right side may use untypeable keys, e.g.:  nmap - $',
+        '" e.g.:  nmap - $    (shifted keys work on either side: nmap H ^)',
       ];
       for (let i = 0; i < seed.length; i++) {
         const kid = await this.plugin.rem.createRem();

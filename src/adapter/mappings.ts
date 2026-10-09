@@ -10,15 +10,14 @@
  * pressed key (lhs) with a sequence of canonical engine symbols (rhs), and
  * rhs symbols are never re-expanded — loops are impossible by construction.
  *
- * Two platform facts shape the rules (see keymap.ts header):
- * - Stealing is shift-blind → an lhs must be an unshifted key or a Ctrl
- *   chord; capitals/shifted symbols are rejected with an explanation.
- * - rhs tokens are ENGINE symbols, not keystrokes → they bypass
- *   shift-blindness entirely: `nmap - $` works even though `$` can never be
- *   typed live. This is the main reason the feature exists.
+ * Platform facts that shape the rules (see keymap.ts header):
+ * - An lhs is ONE stealable key: a plain key, a shifted key (stolen as
+ *   'shift+<base>', US layout), or a Ctrl chord.
+ * - rhs tokens are ENGINE symbols, not keystrokes — they are fed to the
+ *   engine directly and never stolen.
  */
 import type { Mode, Pending } from '../engine/types';
-import { bindingsForMode, NORMAL_BINDINGS, SPEC_TO_SYM } from './keymap';
+import { bindingsForMode, NORMAL_BINDINGS, SPEC_TO_SYM, specForChar } from './keymap';
 
 /** The modes user mappings can target (insert/command are off limits). */
 export type MapMode = 'normal' | 'visual' | 'visual-line';
@@ -138,10 +137,8 @@ export function renderKeys(syms: string[]): string {
 /** Unshifted punctuation proven stealable (keymap.ts plainPunct + commandExtra). */
 const LHS_PUNCT = new Set([';', ',', '.', '`', "'", '[', ']', '/', '-', '=', '\\']);
 
-/** Shifted US-layout characters — arrive as their unshifted key or not at all. */
-const SHIFTED = new Set('~!@#$%^&*()_+{}|:"<>?'.split(''));
-
 const NAMED_LHS: Record<string, { sym: string; spec: string }> = {
+  lt: { sym: '<', spec: 'shift+,' },
   space: { sym: ' ', spec: 'space' },
   cr: { sym: 'Enter', spec: 'enter' },
   enter: { sym: 'Enter', spec: 'enter' },
@@ -168,9 +165,8 @@ export function parseLhs(token: string): { sym: string; spec: string } | { error
   const ch = token;
   if (/[0-9]/.test(ch)) return { error: 'digits cannot be mapped — they are counts' };
   if (/[a-z]/.test(ch)) return { sym: ch, spec: ch };
-  if (/[A-Z]/.test(ch) || SHIFTED.has(ch)) {
-    return { error: `'${ch}' needs Shift, which RemNote's key capture cannot see (shift-blind) — map an unshifted key instead` };
-  }
+  const shifted = specForChar(ch);
+  if (shifted) return { sym: ch, spec: shifted };
   if (LHS_PUNCT.has(ch)) return { sym: ch, spec: ch };
   return { error: `'${ch}' is not a stealable key` };
 }
@@ -210,6 +206,9 @@ const HAZARD_SPECS: Record<string, string> = {
 
 const MAX_RHS = 32;
 
+/** The steal spec of ':', the command-line key (for the lockout safety net). */
+const COLON_SPEC = 'shift+;';
+
 /**
  * Parse config-document lines (one bullet = one line). Later lines win, and
  * `map`/`unmap` of the same key override each other in document order.
@@ -218,8 +217,8 @@ const MAX_RHS = 32;
 export function parseMappings(lines: string[]): { config: MapConfig; diagnostics: MapDiagnostic[] } {
   const config = emptyConfig();
   const diagnostics: MapDiagnostic[] = [];
-  /** Last line that mapped/unmapped ';' in normal mode (for the safety net). */
-  let semicolonLine: { line: number; text: string } | null = null;
+  /** Last line that mapped/unmapped ':' in normal mode (for the safety net). */
+  let colonLine: { line: number; text: string } | null = null;
 
   for (let idx = 0; idx < lines.length; idx++) {
     const line = idx + 1;
@@ -273,7 +272,7 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
         config.mapSpecs[m][lhs.sym] = lhs.spec;
         config.unmapSpecs[m].delete(lhs.spec);
       }
-      if (lhs.spec === ';' && mapModes.includes('normal')) semicolonLine = { line, text };
+      if (lhs.spec === COLON_SPEC && mapModes.includes('normal')) colonLine = { line, text };
     } else if (unmapModes) {
       if (parts.length > 2) {
         err(`${verb} takes no right-hand side`);
@@ -287,19 +286,19 @@ export function parseMappings(lines: string[]): { config: MapConfig; diagnostics
         delete config.mapSpecs[m][lhs.sym];
         config.unmapSpecs[m].add(lhs.spec);
       }
-      if (lhs.spec === ';' && unmapModes.includes('normal')) semicolonLine = { line, text };
+      if (lhs.spec === COLON_SPEC && unmapModes.includes('normal')) colonLine = { line, text };
     }
   }
 
   // Safety net: don't let a config silently lock the user out of `:` — the
   // command line is how :config/:mapload are reached from the keyboard.
-  const semicolonGone =
-    config.unmapSpecs.normal.has(';') || ';' in config.maps.normal;
-  const rescued = Object.values(config.maps.normal).some((rhs) => rhs[0] === ';');
-  if (semicolonGone && !rescued && semicolonLine) {
+  const colonGone =
+    config.unmapSpecs.normal.has(COLON_SPEC) || ':' in config.maps.normal;
+  const rescued = Object.values(config.maps.normal).some((rhs) => rhs[0] === ':');
+  if (colonGone && !rescued && colonLine) {
     diagnostics.push({
-      line: semicolonLine.line,
-      text: semicolonLine.text,
+      line: colonLine.line,
+      text: colonLine.text,
       severity: 'warning',
       message:
         'no key opens the command line now — :map/:mapload are unreachable by keyboard (the "Vim: Edit keybindings" palette command still works)',

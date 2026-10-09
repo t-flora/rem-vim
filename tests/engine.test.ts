@@ -62,7 +62,7 @@ describe('motions', () => {
     expect(e.caret).toBe(4);
   });
 
-  it('f/t/, char search (; is the command line, not a repeat)', () => {
+  it('f/t/, char search', () => {
     const e = h('hello world');
     e.keys('fo');
     expect(e.caret).toBe(4); // ON the first o
@@ -485,14 +485,14 @@ describe('visual mode (charwise, plain v)', () => {
     expect(e.sel).toBeNull();
   });
 
-  it('vv (V) then d deletes the whole line', () => {
+  it('V then d deletes the whole line', () => {
     const e = h(['a', 'b'], 0);
-    e.keys('vvd');
+    e.keys('Vd');
     expect(e.lines).toEqual(['b']);
     expect(e.mode).toBe('normal');
   });
 
-  it('vgg / vge escalate to a line-wise doc-boundary selection', () => {
+  it('vgg / vG escalate to a line-wise doc-boundary selection', () => {
     const e = h(['a', 'b', 'c', 'd'], 2);
     e.keys('vgg');
     expect(e.mode).toBe('visual-line');
@@ -500,50 +500,44 @@ describe('visual mode (charwise, plain v)', () => {
     e.keys('d');
     expect(e.lines).toEqual(['d']);
     const e2 = h(['a', 'b', 'c', 'd'], 1);
-    e2.keys('vge');
+    e2.keys('vG');
     expect(e2.vSelRows).toEqual([1, 3]);
     e2.keys('d');
     expect(e2.lines).toEqual(['a']);
   });
 });
 
-describe('visual mode case toggle (` / ~)', () => {
+describe('visual mode case toggle (~)', () => {
   it('toggles a mixed-case selection and returns to normal mode at its start', () => {
     const e = h('AbCdEf');
-    e.keys('vlll`'); // selects "AbCd"
+    e.keys('vlll~'); // selects "AbCd"
     expect(e.line).toBe('aBcDEf');
     expect(e.mode).toBe('normal');
     expect(e.caret).toBe(0);
   });
 
-  it('~ is the same command (shift-blind synonym)', () => {
-    const e = h('AbCdEf');
-    e.keys('vlll~');
-    expect(e.line).toBe('aBcDEf');
-  });
-
   it('toggles an all-lowercase selection to uppercase', () => {
     const e = h('hello world', 0, 0);
-    e.keys('ve`'); // selects "hello"
+    e.keys('ve~'); // selects "hello"
     expect(e.line).toBe('HELLO world');
   });
 
   it('toggles an all-uppercase selection to lowercase', () => {
     const e = h('HELLO world', 0, 0);
-    e.keys('ve`');
+    e.keys('ve~');
     expect(e.line).toBe('hello world');
   });
 
   it('non-letter characters in the selection pass through unchanged', () => {
     const e = h('a1 b2!c', 0, 0);
-    e.keys('v$`'); // selects the whole line
+    e.keys('v$~'); // selects the whole line
     expect(e.line).toBe('A1 B2!C');
   });
 
   it('does not yank into the register — vim visual ~ never yanks', () => {
     const e = h('ab CD', 0, 0);
     e.keys('yl'); // char register = 'a'
-    e.keys('$vh`'); // select "CD", toggle -> "cd"
+    e.keys('$vh~'); // select "CD", toggle -> "cd"
     expect(e.line).toBe('ab cd');
     e.keys('0p'); // paste: still the ORIGINAL 'a', unaffected by the toggle
     expect(e.line).toBe('aab cd');
@@ -552,7 +546,7 @@ describe('visual mode case toggle (` / ~)', () => {
   it('refuses a selection containing an atomic-element placeholder', () => {
     const line = `see ${ATOMIC_CH} end`;
     const e = h(line, 0, 0);
-    e.keys('v$`'); // selects the whole line, including the chip
+    e.keys('v$~'); // selects the whole line, including the chip
     expect(e.line).toBe(line);
     expect(e.mode).toBe('normal');
   });
@@ -589,7 +583,7 @@ describe('gs (visual surround)', () => {
     expect(e2.line).toBe('[foo] bar');
   });
 
-  it('gsq wraps in double quotes (mnemonic: " itself is unreachable, shift-blind)', () => {
+  it('gsq wraps in double quotes (alias for gs")', () => {
     const e = h('foo bar');
     e.keys('vllgsq');
     expect(e.line).toBe('"foo" bar');
@@ -723,7 +717,7 @@ describe('visual-line mode (multi-bullet)', () => {
   });
 });
 
-describe('shift-blind synonyms (live-reachable spellings)', () => {
+describe('visual entry, find repeat and unshifted aliases', () => {
   const doc = () => ['one', 'two', 'three', 'four'];
 
   it('single v enters CHARWISE visual (in-bullet selection first)', () => {
@@ -734,13 +728,15 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
     expect(e.lines).toEqual(['three', 'four']);
   });
 
-  it('v cycles: charwise → line-mode → normal', () => {
+  it('v in visual exits like vim; V switches charwise to line-wise; V again exits', () => {
     const e = h('hello');
     e.keys('v');
     expect(e.mode).toBe('visual');
     e.keys('v');
+    expect(e.mode).toBe('normal');
+    e.keys('vV');
     expect(e.mode).toBe('visual-line');
-    e.keys('v');
+    e.keys('V');
     expect(e.mode).toBe('normal');
   });
 
@@ -765,9 +761,9 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
     expect(e.lines).toEqual(['one', 'four']);
   });
 
-  it('vv gives line-wise visual (V), then jd cuts bullets', () => {
+  it('V gives line-wise visual, then jd cuts bullets', () => {
     const e = h(doc(), 0);
-    e.keys('vv');
+    e.keys('V');
     expect(e.mode).toBe('visual-line');
     e.keys('jd');
     expect(e.lines).toEqual(['three', 'four']);
@@ -781,27 +777,48 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
     expect(e.indents).toEqual([0, 0, 0, 0]);
   });
 
-  it('; without a pending find opens the command line', () => {
+  it(': opens the command line', () => {
     const e = h('abc');
-    e.keys(';');
+    e.keys(':');
     expect(e.mode).toBe('command');
     e.keys('w<cr>');
     expect(e.lastEx).toBe('w');
   });
 
-  it('; opens the command line even after an f find (repeat retired)', () => {
-    const e = h('a.b.c');
+  it('; with no previous find is a no-op', () => {
+    const e = h('abc');
+    e.keys(';');
+    expect(e.mode).toBe('normal');
+    expect(e.caret).toBe(0);
+  });
+
+  it('; repeats the last find forward and , reverses it', () => {
+    const e = h('a.b.c.d');
     e.keys('f.');
     // f lands the cursor ON the found char (index 1), not one past it — the
     // offset AFTER the char is `findChar`'s inclusive operator-range end, used
     // only by df/dt. A plain f then x must delete the char it landed on.
     expect(e.caret).toBe(1);
     e.keys(';');
-    expect(e.mode).toBe('command');
-    e.keys('<esc>');
-    // , still reverse-repeats the find
-    e.keys('f.,');
-    expect(e.caret).toBe(1);
+    expect(e.caret).toBe(3);
+    e.keys(';');
+    expect(e.caret).toBe(5);
+    e.keys(',');
+    expect(e.caret).toBe(3);
+  });
+
+  it('; repeats t without sticking on the adjacent char', () => {
+    const e = h('a.b.c');
+    e.keys('t.');
+    expect(e.caret).toBe(0);
+    e.keys(';');
+    expect(e.caret).toBe(2);
+  });
+
+  it('d; deletes through the next repeat of the find (inclusive, like df)', () => {
+    const e = h('a.b.c');
+    e.keys('f.d;');
+    expect(e.line).toBe('ac');
   });
 
   it('f lands ON the char so f<c> then x deletes exactly that char', () => {
@@ -900,20 +917,24 @@ describe('shift-blind synonyms (live-reachable spellings)', () => {
 
   it("'/' and '-' are typeable INSIDE the command line (:s syntax, :e args)", () => {
     const e = h('abc');
-    e.keys(';s/a-b/c/g<cr>');
+    e.keys(':s/a-b/c/g<cr>');
     expect(e.lastEx).toBe('s/a-b/c/g');
     expect(e.mode).toBe('normal');
   });
 
-  it('backtick toggles case like ~', () => {
-    const e = h('abc');
-    e.keys('`');
-    expect(e.line).toBe('Abc');
+  it('backtick jumps to a mark like apostrophe (marks are bullet-level)', () => {
+    const e = h(['one', 'two', 'three'], 0);
+    e.keys('ma');
+    e.keys('G');
+    expect(e.row).toBe(2);
+    e.keys('`a');
+    expect(e.row).toBe(0);
+    expect(e.line).toBe('one');
   });
 
-  it('g-chords: ge → doc end, gl → line end, gh → first non-blank', () => {
+  it('g-chords: G → doc end, gl → line end, gh → first non-blank', () => {
     const e = h(['  one', 'two', 'three'], 0, 3);
-    e.keys('ge');
+    e.keys('G');
     expect(e.row).toBe(2);
     e.keys('gg');
     expect(e.row).toBe(0);
@@ -1069,9 +1090,9 @@ describe('gt/gp/gn/gc/gm are unbound (removed pane aliases)', () => {
 describe('jumplist (Ctrl-O / Ctrl-I)', () => {
   const doc = () => ['a', 'b', 'c', 'd', 'e'];
 
-  it('Ctrl-O returns to where a gg/ge jump left from, Ctrl-I re-jumps', () => {
+  it('Ctrl-O returns to where a gg/G jump left from, Ctrl-I re-jumps', () => {
     const e = h(doc(), 2);
-    e.keys('ge'); // jump to doc end; records row 2
+    e.keys('G'); // jump to doc end; records row 2
     expect(e.row).toBe(4);
     e.keys('<c-o>');
     expect(e.row).toBe(2);
@@ -1081,7 +1102,7 @@ describe('jumplist (Ctrl-O / Ctrl-I)', () => {
 
   it('chained jumps walk back in order', () => {
     const e = h(doc(), 1);
-    e.keys('ge'); // 1 → 4, jumps: [1]
+    e.keys('G'); // 1 → 4, jumps: [1]
     e.keys('gg'); // 4 → 0, jumps: [1, 4]
     expect(e.row).toBe(0);
     e.keys('<c-o>');
@@ -1149,11 +1170,11 @@ describe('yank/delete → system clipboard', () => {
 });
 
 describe('command line over a visual selection', () => {
-  it('; from visual-line keeps the selection through command mode', () => {
+  it(': from visual-line keeps the selection through command mode', () => {
     const e = h(['one', 'two', 'three'], 0);
     e.keys('vj'); // line-select rows 0-1
     expect(e.vSelRows).toEqual([0, 1]);
-    e.keys(';');
+    e.keys(':');
     expect(e.mode).toBe('command');
     expect(e.vSelRows).toEqual([0, 1]); // selection survives into command mode
     e.keys('noop<cr>');
@@ -1173,7 +1194,7 @@ describe('command line over a visual selection', () => {
 
   it('documents are untouched by a selection command round-trip', () => {
     const e = h(['one', 'two', 'three'], 0);
-    e.keys('vj;noop<cr>');
+    e.keys('vj:noop<cr>');
     expect(e.lines).toEqual(['one', 'two', 'three']);
     expect(e.lastEx).toBe('noop');
   });
@@ -1204,7 +1225,7 @@ describe('command-line mode (Ex)', () => {
 
   it(':help reaches the adapter as an Ex command', () => {
     const e = h('abc');
-    e.keys(';help<cr>');
+    e.keys(':help<cr>');
     expect(e.lastEx).toBe('help');
     expect(e.mode).toBe('normal');
   });
@@ -1298,7 +1319,7 @@ describe('incremental search (space)', () => {
   });
 });
 
-describe('search step (n / z)', () => {
+describe('search step (n / N)', () => {
   it('n repeats the last search forward', () => {
     const e = h(['foo', 'bar foo', 'baz', 'foo end']);
     e.keys('<space>foo<cr>');
@@ -1307,20 +1328,20 @@ describe('search step (n / z)', () => {
     expect(e.row).toBe(3);
   });
 
-  it('z repeats the last search backward', () => {
+  it('N repeats the last search backward', () => {
     const e = h(['foo', 'bar foo', 'baz', 'foo end']);
     e.keys('<space>foo<cr>');
     expect(e.row).toBe(1);
-    e.keys('z');
+    e.keys('N');
     expect(e.row).toBe(0);
   });
 
-  it('n/z with no previous search is a no-op', () => {
+  it('n/N with no previous search is a no-op', () => {
     const e = h(['alpha', 'bravo'], 0, 1);
     e.keys('n');
     expect(e.row).toBe(0);
     expect(e.caret).toBe(1);
-    e.keys('z');
+    e.keys('N');
     expect(e.row).toBe(0);
     expect(e.caret).toBe(1);
   });
@@ -1331,7 +1352,7 @@ describe('search step (n / z)', () => {
     expect(e.row).toBe(0);
     e.keys('n');
     expect(e.row).toBe(0); // wrapped all the way around, only match is here
-    e.keys('z');
+    e.keys('N');
     expect(e.row).toBe(0);
   });
 });
@@ -1520,35 +1541,35 @@ describe('marks', () => {
   });
 });
 
-describe('gj (join bullets)', () => {
-  it('gj joins the next sibling with a space', () => {
+describe('J (join bullets)', () => {
+  it('J joins the next sibling with a space', () => {
     const e = h(['foo', 'bar', 'rest'], 0, 0);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines).toEqual(['foo bar', 'rest']);
   });
 
-  it('3gj joins three bullets into one', () => {
+  it('3J joins three bullets into one', () => {
     const e = h(['a', 'b', 'c', 'd'], 0, 0);
-    e.keys('3gj');
+    e.keys('3J');
     expect(e.lines).toEqual(['a b c', 'd']);
   });
 
-  it('gj skips over the current subtree to the next SIBLING', () => {
+  it('J skips over the current subtree to the next SIBLING', () => {
     const e = new Harness(['p', 'kid', 'q'], 0, 0, [0, 1, 0]);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines).toEqual(['p q', 'kid']);
     expect(e.indents).toEqual([0, 1]);
   });
 
-  it('gj with no following sibling is a no-op', () => {
+  it('J with no following sibling is a no-op', () => {
     const e = new Harness(['x', 'top'], 0, 0, [1, 0]);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines).toEqual(['x', 'top']);
   });
 
-  it('gj is undoable', () => {
+  it('J is undoable', () => {
     const e = h(['foo', 'bar'], 0, 0);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines).toEqual(['foo bar']);
     e.keys('u');
     expect(e.lines).toEqual(['foo', 'bar']);
@@ -1677,9 +1698,9 @@ describe('dot-repeat', () => {
     expect(e.line).toBe('abc');
   });
 
-  it('. repeats gj', () => {
+  it('. repeats J', () => {
     const e = h(['a', 'b', 'c'], 0, 0);
-    e.keys('gj');
+    e.keys('J');
     expect(e.lines).toEqual(['a b', 'c']);
     e.keys('.');
     expect(e.lines).toEqual(['a b c']);
@@ -1696,7 +1717,7 @@ describe('dot-repeat', () => {
 describe(':N goto-line (engine seam)', () => {
   it('a bare number submitted on the command line reaches the adapter verbatim', () => {
     const e = h(['one', 'two', 'three']);
-    e.keys(';10<cr>');
+    e.keys(':10<cr>');
     expect(e.lastEx).toBe('10');
     expect(e.mode).toBe('normal');
   });
@@ -1790,7 +1811,7 @@ describe('gs surround action order (live-selection hazard)', () => {
 describe('gs surround stays charwise-only', () => {
   it('visual-line g then s cancels the chord without touching the text', () => {
     const e = h(['abc', 'def']);
-    e.keys('vv');
+    e.keys('V');
     expect(e.mode).toBe('visual-line');
     e.keys('gs');
     expect(e.mode).toBe('visual-line');

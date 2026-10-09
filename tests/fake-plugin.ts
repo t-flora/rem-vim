@@ -96,6 +96,10 @@ export class FakeRem {
   async getParentRem(): Promise<FakeRem | undefined> {
     return this.parent ? this.world.rems.get(this.parent) : undefined;
   }
+  async positionAmongstSiblings(): Promise<number | undefined> {
+    const p = this.parent ? this.world.rems.get(this.parent) : undefined;
+    return p ? p.childIds.indexOf(this._id) : undefined;
+  }
 }
 
 export class FakeWorld {

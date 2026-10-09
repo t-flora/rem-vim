@@ -39,7 +39,7 @@ async function onActivate(plugin: ReactRNPlugin) {
     },
   });
 
-  // Mouse-reachable recovery path: even a config that unmapped ';' (no way
+  // Mouse-reachable recovery path: even a config that unmapped ':' (no way
   // to type ':config') can be fixed from the command palette.
   await plugin.app.registerCommand({
     id: 'vim-config',

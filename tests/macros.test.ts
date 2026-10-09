@@ -116,8 +116,8 @@ describe('replay (gq)', () => {
 
   it('macros can run Ex commands recorded through the command line', () => {
     const e = h(['this is bad', 'also bad'], 0, 0);
-    e.keys('qa;s/bad/good/<cr>q');
-    expect(e.state.macros['a']).toEqual([';', 's', '/', 'b', 'a', 'd', '/', 'g', 'o', 'o', 'd', '/', 'Enter']);
+    e.keys('qa:s/bad/good/<cr>q');
+    expect(e.state.macros['a']).toEqual([':', 's', '/', 'b', 'a', 'd', '/', 'g', 'o', 'o', 'd', '/', 'Enter']);
     expect(e.lastEx).toBe('s/bad/good/');
     e.keys('j');
     e.lastEx = null;

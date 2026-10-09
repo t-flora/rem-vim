@@ -2,16 +2,23 @@
  * Keys to steal from RemNote (is-hotkey syntax) and the engine symbol each maps
  * to.
  *
- * HARD PLATFORM CONSTRAINT (verified empirically): RemNote's steal matcher is
- * shift-blind. A bare spec like 'v' matches BOTH v and Shift+V and reports the
- * same spec string, while 'shift+v'-style specs never match anything at all.
- * So shifted characters are indistinguishable from their unshifted keys, and
- * capital-letter vim commands (V, A, I, O, $, ~, <, >, :) cannot be bound to
- * their real keys. The engine provides unshifted synonyms instead: `vv` for
- * visual-line, `g`-chords (ge/gl/gh/go) for G/$/^/O, backtick for ~, `;` for
- * `:` when no find is pending, and `.`/`,` for `>`/`<` in visual-line mode.
+ * HOW RemNote MATCHES STOLEN KEYS (read from the 1.28.32 app bundle, then
+ * verified at a real keyboard on macOS, 2026-10-07): GlobalStealKeySingleton
+ * runs stock `is-hotkey` on every keydown, matching by keyCode (`which`) and
+ * requiring every modifier the spec doesn't name to be UP. So:
+ *  - a bare spec ('a') matches only the unshifted key — Shift+A does NOT
+ *    match it (and, unstolen, would type a literal 'A' into the bullet);
+ *  - shifted characters are stolen as 'shift+<unshifted key>' and reported
+ *    back under that exact spec ('shift+a', 'shift+4', 'shift+[');
+ *  - a spec written as the shifted character itself is WRONG: is-hotkey turns
+ *    '$' into keyCode 36 (Home) and '{' into 123 (F12).
+ * keyCode is a physical-key code, so SHIFTED below assumes a US layout.
  *
- * Ctrl combinations DO match correctly (ctrl+d etc. verified live).
+ * (Earlier versions of this plugin treated stealing as shift-blind and
+ * routed capitals through unshifted synonyms; most of those synonyms remain
+ * as aliases — see the engine.)
+ *
+ * Ctrl combinations match the same way (ctrl+d etc.).
  */
 export interface KeyBinding {
   spec: string;
@@ -60,14 +67,39 @@ const plainPunct: KeyBinding[] = [
   { spec: '[', sym: '[' },
   { spec: ']', sym: ']' },
   // '/' is deliberately NOT stolen: RemNote's slash-command menu owns it
-  // (the vim command line lives on ';').
+  // (the vim command line lives on ':').
 ];
 
+const shiftedLetters: KeyBinding[] = letters.map((l) => ({ spec: `shift+${l}`, sym: l.toUpperCase() }));
+
+/** Shifted US-layout symbols: the character → its unshifted physical key. */
+export const SHIFTED_BASE: Record<string, string> = {
+  '~': '`', '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7',
+  '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\',
+  ':': ';', '"': "'", '<': ',', '>': '.', '?': '/',
+};
+const shiftedPunct: KeyBinding[] = Object.entries(SHIFTED_BASE).map(([sym, base]) => ({
+  spec: `shift+${base}`,
+  sym,
+}));
+
+/** The is-hotkey spec that steals a printable character, or null if none. */
+export function specForChar(ch: string): string | null {
+  if (/^[A-Z]$/.test(ch)) return `shift+${ch.toLowerCase()}`;
+  if (ch in SHIFTED_BASE) return `shift+${SHIFTED_BASE[ch]}`;
+  return null;
+}
+
+// Every shifted key is stolen in normal/visual, bound or not: an unstolen
+// Shift+key would type its character into the bullet, which normal mode
+// must never do. ('shift+/' is '?', not RemNote's '/' slash menu.)
 export const NORMAL_BINDINGS: KeyBinding[] = [
   ...named,
   ...plainLetters,
+  ...shiftedLetters,
   ...plainDigits,
   ...plainPunct,
+  ...shiftedPunct,
 ];
 
 export const INSERT_BINDINGS: KeyBinding[] = [{ spec: 'escape', sym: 'Escape' }];
@@ -75,9 +107,8 @@ export const INSERT_BINDINGS: KeyBinding[] = [{ spec: 'escape', sym: 'Escape' }]
 // While TYPING a command line every printable key must reach the engine, not
 // the document underneath — including keys normal mode leaves to RemNote.
 // '/' here is the :s separator (`s/foo/bar/g`); the rest make :e arguments
-// with hyphens etc. typeable. Shifted characters stay unreachable
-// (shift-blind stealing), so command syntax must never REQUIRE them.
-// (' [ ] moved into the normal-mode set for marks/text objects.)
+// with hyphens etc. typeable. Capitals and shifted symbols come from
+// NORMAL_BINDINGS. (' [ ] moved into the normal-mode set for marks/text objects.)
 const commandExtra: KeyBinding[] = ['/', '-', '=', '\\'].map(
   (c) => ({ spec: c, sym: c })
 );
@@ -91,7 +122,7 @@ export const ALL_BINDINGS: KeyBinding[] = COMMAND_BINDINGS;
 
 /**
  * Map an is-hotkey spec (as reported by RemNote's steal event) to an engine
- * symbol. Built in binding order so shifted specs resolve first.
+ * symbol. Specs are unique, so the first binding for each one wins.
  */
 export const SPEC_TO_SYM: Record<string, string> = {};
 for (const b of ALL_BINDINGS) {

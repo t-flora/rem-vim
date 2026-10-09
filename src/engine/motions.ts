@@ -136,6 +136,21 @@ export function wordEnd(s: string, c: number, big: boolean): number {
   return endOfRun(s, i, big);
 }
 
+/**
+ * `ge` / `gE`: ON-char offset of the last char of the previous word (0 when
+ * there is none). The caret sits on char `c`; past the end it counts as on
+ * the last char, matching the engine's I-beam end-of-line convention.
+ */
+export function prevWordEnd(s: string, c: number, big: boolean): number {
+  const n = s.length;
+  if (n === 0) return 0;
+  let i = Math.min(c, n - 1);
+  if (!isSpace(s[i])) i = startOfRun(s, i, big);
+  let j = i - 1;
+  while (j >= 0 && isSpace(s[j])) j--;
+  return j < 0 ? 0 : cpStart(s, j);
+}
+
 function endOfRun(s: string, i: number, big: boolean): number {
   const n = s.length;
   const cls = charClass(s[i], big);

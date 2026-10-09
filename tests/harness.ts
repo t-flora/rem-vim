@@ -374,6 +374,26 @@ export class Harness {
         this.vTrail = null;
         this.syncVSel();
         break;
+      case 'paragraph': {
+        // Same rule as the adapter's walkParagraph (rows instead of rems).
+        this.recordJump();
+        const empty = (r: number) => this.lines[r].trim() === '';
+        let r = this.row;
+        for (let c = 0; c < a.count; c++) {
+          let seenText = !empty(r);
+          for (;;) {
+            const next = r + a.dir;
+            if (next < 0 || next >= this.lines.length) break;
+            r = next;
+            if (empty(r) && seenText) break;
+            if (!empty(r)) seenText = true;
+          }
+        }
+        this.row = r;
+        this.caret = 0;
+        this.sel = null;
+        break;
+      }
       case 'goDoc':
         this.recordJump();
         this.row = a.where === 'start' ? 0 : this.lines.length - 1;

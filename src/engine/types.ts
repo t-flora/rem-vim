@@ -83,6 +83,12 @@ export type Action =
   | { t: 'outdentSelection' }
   | { t: 'clearRemSelection' }
   | { t: 'goDoc'; where: 'start' | 'end' }
+  /**
+   * `{` (dir -1) / `}` (dir +1): walk the caret bullet by bullet to the
+   * `count`-th paragraph boundary — an empty bullet, vim's blank line — or
+   * to the document start/end if there is none. A jump, like vim's.
+   */
+  | { t: 'paragraph'; dir: -1 | 1; count: number }
   /** Move the caret vertically by `count` Rems, page-style (Ctrl-D/U/E/Y). */
   | { t: 'scroll'; dir: -1 | 1; count: number }
   /** Run an Ex command line (without the leading ':'), e.g. "wq", "e foo". */
@@ -96,7 +102,7 @@ export type Action =
   /** `'<c>`: jump to a mark (a jumplist entry, like vim). */
   | { t: 'gotoMark'; name: string }
   /**
-   * `gj` (vim J): join the focused bullet with its next sibling `count`
+   * `J`: join the focused bullet with its next sibling `count`
    * times — sibling text appended with a space, its children adopted.
    */
   | { t: 'joinRem'; count: number }
@@ -118,7 +124,7 @@ export type Action =
    */
   | { t: 'search'; pattern: string }
   /**
-   * `n` (dir 1) / the previous-match key (dir -1) in NORMAL mode: repeat the
+   * `n` (dir 1) / `N` (dir -1) in NORMAL mode: repeat the
    * last `search` pattern in the given direction from the current position.
    * A no-op (adapter shows a toast) if no search has run yet this session.
    */
@@ -156,7 +162,7 @@ export type Pending =
   | { p: 'surround' }
   /** `q` pressed (no recording active); waiting for the register name a–z. */
   | { p: 'record' }
-  /** `gq` pressed; waiting for the register to replay (`.` = last replayed). */
+  /** `@`/`gq` pressed; waiting for the register to replay (`@`/`.` = last replayed). */
   | { p: 'play' };
 
 export interface VimState {

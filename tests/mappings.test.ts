@@ -73,11 +73,19 @@ describe('parseLhs', () => {
     expect(parseLhs('5')).toHaveProperty('error');
     expect((parseLhs('5') as { error: string }).error).toMatch(/counts/);
   });
-  it('rejects capitals and shifted symbols with a shift-blind explanation', () => {
-    for (const ch of ['A', 'V', '$', '^', '~', '_', ':', '?', '{', '"']) {
-      const r = parseLhs(ch) as { error: string };
-      expect(r.error, ch).toMatch(/shift/i);
-    }
+  it('accepts capitals and shifted symbols, stolen as shift+<unshifted key>', () => {
+    expect(parseLhs('A')).toEqual({ sym: 'A', spec: 'shift+a' });
+    expect(parseLhs('V')).toEqual({ sym: 'V', spec: 'shift+v' });
+    expect(parseLhs('$')).toEqual({ sym: '$', spec: 'shift+4' });
+    expect(parseLhs('^')).toEqual({ sym: '^', spec: 'shift+6' });
+    expect(parseLhs('~')).toEqual({ sym: '~', spec: 'shift+`' });
+    expect(parseLhs('_')).toEqual({ sym: '_', spec: 'shift+-' });
+    expect(parseLhs(':')).toEqual({ sym: ':', spec: 'shift+;' });
+    expect(parseLhs('?')).toEqual({ sym: '?', spec: 'shift+/' });
+    expect(parseLhs('{')).toEqual({ sym: '{', spec: 'shift+[' });
+    expect(parseLhs('"')).toEqual({ sym: '"', spec: "shift+'" });
+    expect(parseLhs('|')).toEqual({ sym: '|', spec: 'shift+\\' });
+    expect(parseLhs('<lt>')).toEqual({ sym: '<', spec: 'shift+,' });
   });
   it('rejects <esc>, multi-key sequences, non-ASCII, unknown named keys', () => {
     expect((parseLhs('<esc>') as { error: string }).error).toMatch(/reserved/);
@@ -164,7 +172,7 @@ describe('parseMappings: last-wins overrides', () => {
 
 describe('parseMappings: errors', () => {
   it('every lhs rejection surfaces as an error and skips the line', () => {
-    const r = parse('nmap 5 j', 'nmap A j', 'nmap $ j', 'nmap <esc> j', 'nmap gw j');
+    const r = parse('nmap 5 j', 'nmap é j', 'nmap <f1> j', 'nmap <esc> j', 'nmap gw j');
     expect(errors(r)).toHaveLength(5);
     expect(Object.keys(r.config.maps.normal)).toEqual([]);
     expect(errors(r).map((d) => d.line)).toEqual([1, 2, 3, 4, 5]);
@@ -223,16 +231,17 @@ describe('parseMappings: warnings', () => {
     const r = parse('nmap = gl', 'nunmap =');
     expect(warnings(r)).toEqual([]);
   });
-  it('the ; safety net fires on unmap ; and on remapping ;', () => {
-    expect(warnings(parse('unmap ;')).some((w) => w.message.includes('command line'))).toBe(true);
-    expect(warnings(parse('nmap ; gl')).some((w) => w.message.includes('command line'))).toBe(true);
+  it('the : safety net fires on unmap : and on remapping :', () => {
+    expect(warnings(parse('unmap :')).some((w) => w.message.includes('command line'))).toBe(true);
+    expect(warnings(parse('nmap : gl')).some((w) => w.message.includes('command line'))).toBe(true);
   });
-  it('the ; safety net is silenced by a rescue mapping whose rhs starts with ;', () => {
-    const r = parse('unmap ;', 'nmap <space> ;');
+  it('the : safety net is silenced by a rescue mapping whose rhs starts with :', () => {
+    const r = parse('unmap :', 'nmap <space> :');
     expect(warnings(r).filter((w) => w.message.includes('command line'))).toEqual([]);
   });
-  it('the ; safety net is silent when ; is untouched', () => {
+  it('the : safety net is silent when : is untouched, even if ; is remapped', () => {
     expect(warnings(parse('nmap - gl'))).toEqual([]);
+    expect(warnings(parse('nmap ; gl'))).toEqual([]);
   });
 });
 
