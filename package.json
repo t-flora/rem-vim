@@ -26,6 +26,8 @@
   "scripts": {
     "check-types": "tsc",
     "dev": "NODE_ENV=development webpack-dev-server --color --no-open",
+    "watch": "NODE_ENV=production webpack --watch",
+    "serve": "node scripts/serve.mjs",
     "build": "rm -rf dist PluginZip.zip && NODE_ENV=production webpack --color && cd dist && zip -r ../PluginZip.zip .",
     "test": "vitest run",
     "test:watch": "vitest",

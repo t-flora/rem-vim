@@ -61,6 +61,46 @@ toggle. A `-- NORMAL --` badge appears bottom-right when it's active, and the
 bottom-left readout starts with `vim <version>@`. Keep `npm run dev` running
 while you use it; reload RemNote (Cmd/Ctrl-R) after pulling new code.
 
+### Without keeping `npm run dev` open
+
+RemNote loads plugins from any `localhost` URL, so a small static server can
+serve the built plugin instead:
+
+```bash
+npm run build        # or `npm run watch` to rebuild dist/ on every save
+npm run serve        # dependency-free server for dist/ on http://localhost:7171/
+```
+
+Install it once from `http://localhost:7171/` (Develop from localhost, as
+above). After that, rebuilding and reloading RemNote is enough; the server
+sends `no-store`, so RemNote always gets the latest build. Port 8080 stays free
+for `npm run dev`. Don't install both URLs at once, since they're the same plugin.
+
+To start the server at login on macOS, save this as
+`~/Library/LaunchAgents/com.<you>.rem-vim.plist` (fix the paths), then run
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.<you>.rem-vim.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.you.rem-vim</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/you/rem-vim/scripts/serve.mjs</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/you/Library/Logs/rem-vim.log</string>
+  <key>StandardErrorPath</key><string>/Users/you/Library/Logs/rem-vim.log</string>
+</dict>
+</plist>
+```
+
+Stop it with `launchctl bootout gui/$(id -u)/com.you.rem-vim`.
+
 ---
 
 ## Using it
